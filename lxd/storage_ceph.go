@@ -154,9 +154,9 @@ func (s *storageCeph) StoragePoolCreate() error {
 		logger.Debugf(`CEPH OSD storage pool "%s" does exist`, s.OSDPoolName)
 
 		// use existing osd pool
-		msg, err := shared.RunCommand("ceph",
+		msg, err := shared.RunCommand("ceph", "--name"
 			fmt.Sprintf("client.%s", s.UserName), "--cluster",
-			"--cluster", s.ClusterName, "osd", "pool", "get",
+			s.ClusterName, "osd", "pool", "get",
 			s.OSDPoolName, "pg_num")
 		if err != nil {
 			logger.Errorf(`Failed to retrieve number of placement `+
