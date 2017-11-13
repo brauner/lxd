@@ -57,6 +57,14 @@ var storageVolumeConfigKeys = map[string]func(value string) error{
 }
 
 func storageVolumeValidateConfig(name string, config map[string]string, parentPool *api.StoragePool) error {
+
+	if parentPool.Driver == "lvm" {
+		v, _ := parentPool.Config["lvm.use_thinpool"]
+		if (shared.IsTrue(v) || v == "") && config["block.filesystem"] == "btrfs" {
+			return fmt.Errorf("\"block.filesystem\" cannot be set to \"btrfs\" if the key \"lvm.use_thinpool\" is set to a true value for LVM storage pools")
+		}
+	}
+
 	for key, val := range config {
 		// User keys are not validated.
 		if strings.HasPrefix(key, "user.") {

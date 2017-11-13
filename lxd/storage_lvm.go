@@ -697,11 +697,16 @@ func (s *storageLvm) StoragePoolUpdate(writable *api.StoragePoolPut, changedConf
 	}
 
 	// "volume.block.mount_options" requires no on-disk modifications.
-	// "volume.block.filesystem" requires no on-disk modifications.
 	// "volume.size" requires no on-disk modifications.
 	// "rsync.bwlimit" requires no on-disk modifications.
 
 	revert := true
+
+	if shared.StringInSlice("volume.block.filesystem", changedConfig) {
+		if s.useThinpool && writable.Config["volume.block.filesystem"] == "btrfs" {
+			return fmt.Errorf("The \"volume.block.filesystem\" property cannot be set to \"btrfs\" when the LVM storage pool uses a thinpool")
+		}
+	}
 
 	if shared.StringInSlice("lvm.thinpool_name", changedConfig) {
 		if !s.useThinpool {

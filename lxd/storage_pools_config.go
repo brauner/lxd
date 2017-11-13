@@ -129,6 +129,12 @@ func storagePoolValidateConfig(name string, driver string, config map[string]str
 		if ok && !shared.IsTrue(v) && config["lvm.thinpool_name"] != "" {
 			return fmt.Errorf("the key \"lvm.use_thinpool\" cannot be set to a false value when \"lvm.thinpool_name\" is set for LVM storage pools")
 		}
+
+		// The default value for "lvm.use_thinpool" is true so when it's
+		// non-existent or set to "" then this defaults to "true".
+		if (shared.IsTrue(v) || v == "") && config["volume.block.filesystem"] == "btrfs" {
+			return fmt.Errorf("the key \"lvm.use_thinpool\" cannot be set to a true value when \"volume.block.filesystem\" is set to \"btrfs\" for LVM storage pools")
+		}
 	}
 
 	v, ok := config["rsync.bwlimit"]
