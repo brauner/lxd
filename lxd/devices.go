@@ -1350,3 +1350,165 @@ func deviceLoadUsb() ([]usbDevice, error) {
 
 	return result, nil
 }
+
+const SCIB string = "/sys/class/infiniband"
+const SCNET string = "/sys/class/net"
+
+type IBF struct {
+	// port the function belongs to
+	Port int64
+
+	// name of the {physical,virtual} function
+	Fun string
+
+	// whether this is a physical (true) or virtual (false) function
+	PF bool
+
+	// device of the virtual function
+	Device string
+
+	// uverb device of the virtual function
+	Uverb string
+}
+
+func deviceLoadInfiniband() ([]IBF, error) {
+	// check if there are any infiniband devices
+	fscib, err := os.Open(SCIB)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, os.ErrNotExist
+		}
+		return nil, err
+	}
+	defer fscib.Close()
+
+	// eg.g. mlx_i for i = 0, 1, ..., n
+	IBDevNames, err := fscib.Readdirnames(-1)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(IBDevNames) == 0 {
+		return nil, os.ErrNotExist
+	}
+
+	// retrieve all network device names
+	fscnet, err := os.Open(SCNET)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, os.ErrNotExist
+		}
+		return nil, err
+	}
+	defer fscnet.Close()
+
+	// retrieve all network devices
+	NetDevNames, err := fscnet.Readdirnames(-1)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(NetDevNames) == 0 {
+		return nil, os.ErrNotExist
+	}
+
+	UseableDevices := []IBF{}
+	for _, IBDevName := range IBDevNames {
+		IBDevResourceFile := fmt.Sprintf("/sys/class/infiniband/%s/device/resource", IBDevName)
+		IBDevResourceBuf, err := ioutil.ReadFile(IBDevResourceFile)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, NetDevName := range NetDevNames {
+			NetDevResourceFile := fmt.Sprintf("/sys/class/net/%s/device/resource", NetDevName)
+			NetDevResourceBuf, err := ioutil.ReadFile(NetDevResourceFile)
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return nil, err
+			}
+
+			// If the device and the VF have the same address space
+			// they belong together.
+			if bytes.Compare(IBDevResourceBuf, NetDevResourceBuf) != 0 {
+				continue
+			}
+
+			// Now let's find the ports.
+			IBDevID := fmt.Sprintf("/sys/class/net/%s/dev_id", NetDevName)
+			IBDevPort := fmt.Sprintf("/sys/class/net/%s/dev_port", NetDevName)
+			DevIDBuf, err := ioutil.ReadFile(IBDevID)
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return nil, err
+			}
+
+			DevIDString := strings.TrimSpace(string(DevIDBuf))
+			DevIDPort, err := strconv.ParseInt(DevIDString, 0, 64)
+			if err != nil {
+				return nil, err
+			}
+
+			DevPort := int64(0)
+			DevPortBuf, err := ioutil.ReadFile(IBDevPort)
+			if err != nil {
+				if !os.IsNotExist(err) {
+					return nil, err
+				}
+			} else {
+				DevPortString := strings.TrimSpace(string(DevPortBuf))
+				DevPort, err = strconv.ParseInt(DevPortString, 0, 64)
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			Port := DevIDPort
+			if DevPort > DevIDPort {
+				Port = DevPort
+			}
+			Port++
+
+			// identify the /dev/infiniband/uverb<idx> device
+			IBUverb := fmt.Sprintf("/sys/class/net/%s/device/infiniband_verbs", NetDevName)
+			fuverb, err := os.Open(IBUverb)
+			if err != nil {
+				if os.IsNotExist(err) {
+					return nil, os.ErrNotExist
+				}
+				return nil, err
+			}
+			defer fuverb.Close()
+
+			// retrieve all network devices
+			UverbName, err := fuverb.Readdirnames(-1)
+			if err != nil {
+				return nil, err
+			}
+
+			if len(UverbName) != 1 {
+				return nil, os.ErrNotExist
+			}
+
+			NewIBF := IBF{
+				Port:   Port,
+				Fun:    IBDevName,
+				Device: NetDevName,
+				Uverb:  UverbName[0],
+			}
+
+			// figure out whether this is a physical function
+			IBPF := fmt.Sprintf("/sys/class/net/%s/device/physfn", NetDevName)
+			NewIBF.PF = !shared.PathExists(IBPF)
+
+			UseableDevices = append(UseableDevices, NewIBF)
+		}
+	}
+
+	// check whether the device is an infiniband device
+	return UseableDevices, nil
+}
