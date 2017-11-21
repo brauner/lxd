@@ -1364,11 +1364,11 @@ type IBF struct {
 	// whether this is a physical (true) or virtual (false) function
 	PF bool
 
-	// device of the virtual function
+	// device of the function
 	Device string
 
-	// uverb device of the virtual function
-	Uverb string
+	// uverb device of the function
+	OptionalDevices []string
 }
 
 func deviceLoadInfiniband() ([]IBF, error) {
@@ -1473,32 +1473,89 @@ func deviceLoadInfiniband() ([]IBF, error) {
 			}
 			Port++
 
-			// identify the /dev/infiniband/uverb<idx> device
-			IBUverb := fmt.Sprintf("/sys/class/net/%s/device/infiniband_verbs", NetDevName)
-			fuverb, err := os.Open(IBUverb)
-			if err != nil {
-				if os.IsNotExist(err) {
-					return nil, os.ErrNotExist
-				}
-				return nil, err
-			}
-			defer fuverb.Close()
-
-			// retrieve all network devices
-			UverbName, err := fuverb.Readdirnames(-1)
-			if err != nil {
-				return nil, err
-			}
-
-			if len(UverbName) != 1 {
-				return nil, os.ErrNotExist
-			}
-
 			NewIBF := IBF{
 				Port:   Port,
 				Fun:    IBDevName,
 				Device: NetDevName,
-				Uverb:  UverbName[0],
+			}
+
+			// identify the /dev/infiniband/uverb<idx> device
+			tmp := []string{}
+			IBUverb := fmt.Sprintf("/sys/class/net/%s/device/infiniband_verbs", NetDevName)
+			fuverb, err := os.Open(IBUverb)
+			if err != nil {
+				if !os.IsNotExist(err) {
+					return nil, os.ErrNotExist
+				}
+			} else {
+				defer fuverb.Close()
+
+				// optional: retrieve all network devices
+				tmp, err = fuverb.Readdirnames(-1)
+				if err != nil {
+					return nil, err
+				}
+
+				if len(tmp) != 1 {
+					return nil, os.ErrNotExist
+				}
+			}
+			NewIBF.OptionalDevices = append(NewIBF.OptionalDevices, tmp...)
+
+			// identify the /dev/infiniband/ucm<idx> device
+			tmp = []string{}
+			IBcm := fmt.Sprintf("/sys/class/net/%s/device/infiniband_ucm", NetDevName)
+			fcm, err := os.Open(IBcm)
+			if err != nil {
+				if !os.IsNotExist(err) {
+					return nil, os.ErrNotExist
+				}
+			} else {
+				defer fcm.Close()
+
+				// optional: retrieve all network devices
+				tmp, err = fcm.Readdirnames(-1)
+				if err != nil {
+					return nil, err
+				}
+
+				if len(tmp) != 1 {
+					return nil, os.ErrNotExist
+				}
+			}
+			NewIBF.OptionalDevices = append(NewIBF.OptionalDevices, tmp...)
+
+			// identify the /dev/infiniband/{issm,umad}<idx> devices
+			tmp = []string{}
+			IBmad := fmt.Sprintf("/sys/class/net/%s/device/infiniband_mad", NetDevName)
+			ents, err := ioutil.ReadDir(IBmad)
+			if err != nil {
+				if !os.IsNotExist(err) {
+					return nil, err
+				}
+			} else {
+				for _, ent := range ents {
+					IBmadPort := fmt.Sprintf("%s/%s/port", IBmad, ent.Name())
+					portBuf, err := ioutil.ReadFile(IBmadPort)
+					if err != nil {
+						if !os.IsNotExist(err) {
+							return nil, err
+						}
+						continue
+					}
+
+					portStr := strings.TrimSpace(string(portBuf))
+					PortMad, err := strconv.ParseInt(portStr, 0, 64)
+					if err != nil {
+						return nil, err
+					}
+
+					if PortMad != NewIBF.Port {
+						continue
+					}
+
+					NewIBF.OptionalDevices = append(NewIBF.OptionalDevices, ent.Name())
+				}
 			}
 
 			// figure out whether this is a physical function
