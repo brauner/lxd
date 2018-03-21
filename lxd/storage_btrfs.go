@@ -2354,3 +2354,15 @@ func (s *storageBtrfs) StoragePoolVolumeCopy(source *api.StorageVolumeSource) er
 	logger.Infof(successMsg)
 	return nil
 }
+
+func (s *btrfsMigrationSourceDriver) SendStorageVolume(conn *websocket.Conn, op *operation, bwlimit string) error {
+	return nil
+}
+
+func (s *storageBtrfs) StorageMigrationSource() (MigrationStorageSourceDriver, error) {
+	return nil, nil
+}
+
+func (s *storageBtrfs) StorageMigrationSink(conn *websocket.Conn, op *operation) error {
+	return nil
+}

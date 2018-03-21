@@ -232,3 +232,11 @@ func (s *storageMock) StoragePoolResources() (*api.ResourcesStoragePool, error) 
 func (s *storageMock) StoragePoolVolumeCopy(source *api.StorageVolumeSource) error {
 	return nil
 }
+
+func (s *storageMock) StorageMigrationSource() (MigrationStorageSourceDriver, error) {
+	return nil, nil
+}
+
+func (s *storageMock) StorageMigrationSink(conn *websocket.Conn, op *operation) error {
+	return nil
+}

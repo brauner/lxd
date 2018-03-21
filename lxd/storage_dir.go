@@ -1103,3 +1103,11 @@ func (s *storageDir) StoragePoolVolumeCopy(source *api.StorageVolumeSource) erro
 	logger.Infof(successMsg)
 	return nil
 }
+
+func (s *storageDir) StorageMigrationSource() (MigrationStorageSourceDriver, error) {
+	return nil, nil
+}
+
+func (s *storageDir) StorageMigrationSink(conn *websocket.Conn, op *operation) error {
+	return nil
+}

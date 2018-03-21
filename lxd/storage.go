@@ -228,6 +228,9 @@ type storage interface {
 		srcIdmap *idmap.IdmapSet,
 		op *operation,
 		containerOnly bool) error
+
+	StorageMigrationSource() (MigrationStorageSourceDriver, error)
+	StorageMigrationSink(conn *websocket.Conn, op *operation) error
 }
 
 func storageCoreInit(driver string) (storage, error) {

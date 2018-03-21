@@ -6,6 +6,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/gorilla/websocket"
+
 	"github.com/lxc/lxd/lxd/db"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
@@ -2935,5 +2937,17 @@ func (s *storageCeph) StoragePoolVolumeCopy(source *api.StorageVolumeSource) err
 	}
 
 	logger.Infof(successMsg)
+	return nil
+}
+
+func (s *rbdMigrationSourceDriver) SendStorageVolume(conn *websocket.Conn, op *operation, bwlimit string) error {
+	return nil
+}
+
+func (s *storageCeph) StorageMigrationSource() (MigrationStorageSourceDriver, error) {
+	return nil, nil
+}
+
+func (s *storageCeph) StorageMigrationSink(conn *websocket.Conn, op *operation) error {
 	return nil
 }

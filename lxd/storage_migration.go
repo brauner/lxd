@@ -34,6 +34,8 @@ type MigrationStorageSourceDriver interface {
 	 * to clean up any temporary snapshots, etc.
 	 */
 	Cleanup()
+
+	SendStorageVolume(conn *websocket.Conn, op *operation, bwlimit string) error
 }
 
 type rsyncStorageSourceDriver struct {
@@ -43,6 +45,10 @@ type rsyncStorageSourceDriver struct {
 
 func (s rsyncStorageSourceDriver) Snapshots() []container {
 	return s.snapshots
+}
+
+func (s rsyncStorageSourceDriver) SendStorageVolume(conn *websocket.Conn, op *operation, bwlimit string) error {
+	return nil
 }
 
 func (s rsyncStorageSourceDriver) SendWhileRunning(conn *websocket.Conn, op *operation, bwlimit string, containerOnly bool) error {
@@ -82,6 +88,10 @@ func (s rsyncStorageSourceDriver) SendAfterCheckpoint(conn *websocket.Conn, bwli
 
 func (s rsyncStorageSourceDriver) Cleanup() {
 	// noop
+}
+
+func rsyncStorageMigrationSource() (MigrationStorageSourceDriver, error) {
+	return rsyncStorageSourceDriver{nil, nil}, nil
 }
 
 func rsyncMigrationSource(c container, containerOnly bool) (MigrationStorageSourceDriver, error) {
@@ -125,6 +135,10 @@ func snapshotProtobufToContainerArgs(containerName string, snap *migration.Snaps
 		Architecture: int(snap.GetArchitecture()),
 		Stateful:     snap.GetStateful(),
 	}
+}
+
+func rsyncStorageMigrationSink(conn *websocket.Conn, op *operation) error {
+	return nil
 }
 
 func rsyncMigrationSink(live bool, container container, snapshots []*migration.Snapshot, conn *websocket.Conn, srcIdmap *idmap.IdmapSet, op *operation, containerOnly bool) error {

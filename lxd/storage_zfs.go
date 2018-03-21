@@ -2563,3 +2563,15 @@ func (s *storageZfs) StoragePoolVolumeCopy(source *api.StorageVolumeSource) erro
 	logger.Infof(successMsg)
 	return nil
 }
+
+func (s *zfsMigrationSourceDriver) SendStorageVolume(conn *websocket.Conn, op *operation, bwlimit string) error {
+	return nil
+}
+
+func (s *storageZfs) StorageMigrationSource() (MigrationStorageSourceDriver, error) {
+	return nil, nil
+}
+
+func (s *storageZfs) StorageMigrationSink(conn *websocket.Conn, op *operation) error {
+	return nil
+}
