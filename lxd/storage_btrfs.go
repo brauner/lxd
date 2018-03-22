@@ -17,6 +17,7 @@ import (
 
 	"github.com/lxc/lxd/lxd/db"
 	"github.com/lxc/lxd/lxd/migration"
+	"github.com/lxc/lxd/lxd/state"
 	"github.com/lxc/lxd/lxd/util"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
@@ -2355,7 +2356,7 @@ func (s *storageBtrfs) StoragePoolVolumeCopy(source *api.StorageVolumeSource) er
 	return nil
 }
 
-func (s *btrfsMigrationSourceDriver) SendStorageVolume(conn *websocket.Conn, op *operation, bwlimit string) error {
+func (s *btrfsMigrationSourceDriver) SendStorageVolume(conn *websocket.Conn, op *operation, bwlimit string, storage storage) error {
 	return nil
 }
 
@@ -2363,6 +2364,18 @@ func (s *storageBtrfs) StorageMigrationSource() (MigrationStorageSourceDriver, e
 	return nil, nil
 }
 
-func (s *storageBtrfs) StorageMigrationSink(conn *websocket.Conn, op *operation) error {
+func (s *storageBtrfs) StorageMigrationSink(conn *websocket.Conn, op *operation, storage storage) error {
 	return nil
+}
+
+func (s *storageBtrfs) GetStoragePool() *api.StoragePool {
+	return s.pool
+}
+
+func (s *storageBtrfs) GetStoragePoolVolume() *api.StorageVolume {
+	return s.volume
+}
+
+func (s *storageBtrfs) GetState() *state.State {
+	return s.s
 }

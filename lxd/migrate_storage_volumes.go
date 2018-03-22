@@ -95,7 +95,7 @@ func (s *migrationSourceWs) DoStorage(migrateOp *operation) error {
 		return err
 	}
 
-	err = driver.SendStorageVolume(s.fsConn, migrateOp, bwlimit)
+	err = driver.SendStorageVolume(s.fsConn, migrateOp, bwlimit, s.storage)
 	if err != nil {
 		logger.Errorf("Failed to send storage volume")
 		return abort(err)
@@ -237,7 +237,7 @@ func (c *migrationSink) DoStorage(migrateOp *operation) error {
 				fsConn = c.src.fsConn
 			}
 
-			err = mySink(fsConn, migrateOp)
+			err = mySink(fsConn, migrateOp, c.dest.storage)
 			if err != nil {
 				fsTransfer <- err
 				return

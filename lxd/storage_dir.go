@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/lxc/lxd/lxd/migration"
+	"github.com/lxc/lxd/lxd/state"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/idmap"
@@ -1105,9 +1106,21 @@ func (s *storageDir) StoragePoolVolumeCopy(source *api.StorageVolumeSource) erro
 }
 
 func (s *storageDir) StorageMigrationSource() (MigrationStorageSourceDriver, error) {
-	return nil, nil
+	return rsyncStorageMigrationSource()
 }
 
-func (s *storageDir) StorageMigrationSink(conn *websocket.Conn, op *operation) error {
-	return nil
+func (s *storageDir) StorageMigrationSink(conn *websocket.Conn, op *operation, storage storage) error {
+	return rsyncStorageMigrationSink(conn, op, storage)
+}
+
+func (s *storageDir) GetStoragePool() *api.StoragePool {
+	return s.pool
+}
+
+func (s *storageDir) GetStoragePoolVolume() *api.StorageVolume {
+	return s.volume
+}
+
+func (s *storageDir) GetState() *state.State {
+	return s.s
 }

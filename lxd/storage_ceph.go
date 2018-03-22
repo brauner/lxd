@@ -9,6 +9,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/lxc/lxd/lxd/db"
+	"github.com/lxc/lxd/lxd/state"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/logger"
@@ -2940,7 +2941,7 @@ func (s *storageCeph) StoragePoolVolumeCopy(source *api.StorageVolumeSource) err
 	return nil
 }
 
-func (s *rbdMigrationSourceDriver) SendStorageVolume(conn *websocket.Conn, op *operation, bwlimit string) error {
+func (s *rbdMigrationSourceDriver) SendStorageVolume(conn *websocket.Conn, op *operation, bwlimit string, storage storage) error {
 	return nil
 }
 
@@ -2948,6 +2949,18 @@ func (s *storageCeph) StorageMigrationSource() (MigrationStorageSourceDriver, er
 	return nil, nil
 }
 
-func (s *storageCeph) StorageMigrationSink(conn *websocket.Conn, op *operation) error {
+func (s *storageCeph) StorageMigrationSink(conn *websocket.Conn, op *operation, storage storage) error {
 	return nil
+}
+
+func (s *storageCeph) GetStoragePool() *api.StoragePool {
+	return s.pool
+}
+
+func (s *storageCeph) GetStoragePoolVolume() *api.StorageVolume {
+	return s.volume
+}
+
+func (s *storageCeph) GetState() *state.State {
+	return s.s
 }

@@ -137,6 +137,7 @@ type storage interface {
 	GetStorageType() storageType
 	GetStorageTypeName() string
 	GetStorageTypeVersion() string
+	GetState() *state.State
 
 	// Functions dealing with storage pools.
 	StoragePoolInit() error
@@ -149,6 +150,7 @@ type storage interface {
 	StoragePoolUpdate(writable *api.StoragePoolPut, changedConfig []string) error
 	GetStoragePoolWritable() api.StoragePoolPut
 	SetStoragePoolWritable(writable *api.StoragePoolPut)
+	GetStoragePool() *api.StoragePool
 
 	// Functions dealing with custom storage volumes.
 	StoragePoolVolumeCreate() error
@@ -160,6 +162,7 @@ type storage interface {
 	StoragePoolVolumeCopy(source *api.StorageVolumeSource) error
 	GetStoragePoolVolumeWritable() api.StorageVolumePut
 	SetStoragePoolVolumeWritable(writable *api.StorageVolumePut)
+	GetStoragePoolVolume() *api.StorageVolume
 
 	// Functions dealing with container storage volumes.
 	// ContainerCreate creates an empty container (no rootfs/metadata.yaml)
@@ -230,7 +233,7 @@ type storage interface {
 		containerOnly bool) error
 
 	StorageMigrationSource() (MigrationStorageSourceDriver, error)
-	StorageMigrationSink(conn *websocket.Conn, op *operation) error
+	StorageMigrationSink(conn *websocket.Conn, op *operation, storage storage) error
 }
 
 func storageCoreInit(driver string) (storage, error) {

@@ -35,7 +35,7 @@ type MigrationStorageSourceDriver interface {
 	 */
 	Cleanup()
 
-	SendStorageVolume(conn *websocket.Conn, op *operation, bwlimit string) error
+	SendStorageVolume(conn *websocket.Conn, op *operation, bwlimit string, storage storage) error
 }
 
 type rsyncStorageSourceDriver struct {
@@ -47,8 +47,22 @@ func (s rsyncStorageSourceDriver) Snapshots() []container {
 	return s.snapshots
 }
 
-func (s rsyncStorageSourceDriver) SendStorageVolume(conn *websocket.Conn, op *operation, bwlimit string) error {
-	return nil
+func (s rsyncStorageSourceDriver) SendStorageVolume(conn *websocket.Conn, op *operation, bwlimit string, storage storage) error {
+	ourMount, err := storage.StoragePoolVolumeMount()
+	if err != nil {
+		return err
+	}
+	if ourMount {
+		defer storage.StoragePoolVolumeUmount()
+	}
+
+	pool := storage.GetStoragePool()
+	volume := storage.GetStoragePoolVolume()
+
+	wrapper := StorageProgressReader(op, "fs_progress", volume.Name)
+	state := storage.GetState()
+	path := getStoragePoolVolumeMountPoint(pool.Name, volume.Name)
+	return RsyncSend(volume.Name, shared.AddSlash(path), conn, wrapper, bwlimit, state.OS.ExecPath)
 }
 
 func (s rsyncStorageSourceDriver) SendWhileRunning(conn *websocket.Conn, op *operation, bwlimit string, containerOnly bool) error {
@@ -137,7 +151,30 @@ func snapshotProtobufToContainerArgs(containerName string, snap *migration.Snaps
 	}
 }
 
-func rsyncStorageMigrationSink(conn *websocket.Conn, op *operation) error {
+func rsyncStorageMigrationSink(conn *websocket.Conn, op *operation, storage storage) error {
+	err := storage.StoragePoolVolumeCreate()
+	if err != nil {
+		return err
+	}
+
+	ourMount, err := storage.StoragePoolVolumeMount()
+	if err != nil {
+		return err
+	}
+	if ourMount {
+		defer storage.StoragePoolVolumeUmount()
+	}
+
+	pool := storage.GetStoragePool()
+	volume := storage.GetStoragePoolVolume()
+
+	wrapper := StorageProgressWriter(op, "fs_progress", volume.Name)
+	path := getStoragePoolVolumeMountPoint(pool.Name, volume.Name)
+	err = RsyncRecv(shared.AddSlash(path), conn, wrapper)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 

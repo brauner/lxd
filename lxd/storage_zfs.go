@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/lxc/lxd/lxd/migration"
+	"github.com/lxc/lxd/lxd/state"
 	"github.com/lxc/lxd/lxd/util"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
@@ -2564,7 +2565,7 @@ func (s *storageZfs) StoragePoolVolumeCopy(source *api.StorageVolumeSource) erro
 	return nil
 }
 
-func (s *zfsMigrationSourceDriver) SendStorageVolume(conn *websocket.Conn, op *operation, bwlimit string) error {
+func (s *zfsMigrationSourceDriver) SendStorageVolume(conn *websocket.Conn, op *operation, bwlimit string, storage storage) error {
 	return nil
 }
 
@@ -2572,6 +2573,18 @@ func (s *storageZfs) StorageMigrationSource() (MigrationStorageSourceDriver, err
 	return nil, nil
 }
 
-func (s *storageZfs) StorageMigrationSink(conn *websocket.Conn, op *operation) error {
+func (s *storageZfs) StorageMigrationSink(conn *websocket.Conn, op *operation, storage storage) error {
 	return nil
+}
+
+func (s *storageZfs) GetStoragePool() *api.StoragePool {
+	return s.pool
+}
+
+func (s *storageZfs) GetStoragePoolVolume() *api.StorageVolume {
+	return s.volume
+}
+
+func (s *storageZfs) GetState() *state.State {
+	return s.s
 }
