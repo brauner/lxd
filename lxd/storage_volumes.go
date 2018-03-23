@@ -259,6 +259,9 @@ func doVolumeMigration(d *Daemon, poolName string, req *api.StorageVolumesPost) 
 		return InternalError(err)
 	}
 
+	resources := map[string][]string{}
+	resources["storage"] = []string{req.Name}
+
 	run := func(op *operation) error {
 		// And finally run the migration.
 		err = sink.DoStorage(op)
@@ -270,7 +273,7 @@ func doVolumeMigration(d *Daemon, poolName string, req *api.StorageVolumesPost) 
 		return nil
 	}
 
-	op, err := operationCreate(d.cluster, operationClassTask, "Copying storage volume", nil, nil, run, nil, nil)
+	op, err := operationCreate(d.cluster, operationClassTask, "Copying storage volume", resources, nil, run, nil, nil)
 	if err != nil {
 		return InternalError(err)
 	}
@@ -354,6 +357,30 @@ func storagePoolVolumeTypePost(d *Daemon, r *http.Request) Response {
 		return response
 	}
 
+	s, err := storagePoolVolumeInit(d.State(), poolName, volumeName, storagePoolVolumeTypeCustom)
+	if err != nil {
+		return InternalError(err)
+	}
+
+	// This is a migration request so send back requested secrets
+	if req.Migration {
+		ws, err := NewStorageMigrationSource(s)
+		if err != nil {
+			return InternalError(err)
+		}
+
+		resources := map[string][]string{}
+		resources["storage"] = []string{volumeName}
+
+		// Pull mode
+		op, err := operationCreate(d.cluster, operationClassWebsocket, "Migrating storage volume", resources, ws.Metadata(), ws.DoStorage, nil, ws.Connect)
+		if err != nil {
+			return InternalError(err)
+		}
+
+		return OperationResponse(op)
+	}
+
 	// Check that the name isn't already in use.
 	_, err = d.cluster.StoragePoolNodeVolumeGetTypeID(req.Name,
 		storagePoolVolumeTypeCustom, poolID)
@@ -362,11 +389,6 @@ func storagePoolVolumeTypePost(d *Daemon, r *http.Request) Response {
 	}
 
 	doWork := func() error {
-		s, err := storagePoolVolumeInit(d.State(), poolName, volumeName, storagePoolVolumeTypeCustom)
-		if err != nil {
-			return err
-		}
-
 		ctsUsingVolume, err := storagePoolVolumeUsedByRunningContainersWithProfilesGet(d.State(), poolName, volumeName, storagePoolVolumeTypeNameCustom, true)
 		if err != nil {
 			return err
