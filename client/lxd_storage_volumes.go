@@ -319,6 +319,52 @@ func (r *ProtocolLXD) CopyStoragePoolVolume(pool string, source ContainerServer,
 		sourceSecrets[k] = v.(string)
 	}
 
+	// Relay mode migration
+	if args != nil && args.Mode == "relay" {
+		// Push copy source fields
+		req.Source.Type = "migration"
+		req.Source.Mode = "push"
+
+		// Send the request
+		path := fmt.Sprintf("/storage-pools/%s/volumes/%s", url.QueryEscape(pool), url.QueryEscape(volume.Type))
+		if r.clusterTarget != "" {
+			path += fmt.Sprintf("?target=%s", r.clusterTarget)
+		}
+
+		// Send the request
+		targetOp, _, err := r.queryOperation("POST", path, req, "")
+		if err != nil {
+			return nil, err
+		}
+		targetOpAPI := targetOp.Get()
+
+		// Extract the websockets
+		targetSecrets := map[string]string{}
+		for k, v := range targetOpAPI.Metadata {
+			targetSecrets[k] = v.(string)
+		}
+
+		// Launch the relay
+		err = r.proxyMigration(targetOp.(*operation), targetSecrets, source, op.(*operation), sourceSecrets)
+		if err != nil {
+			return nil, err
+		}
+
+		// Prepare a tracking operation
+		rop := remoteOperation{
+			targetOp: targetOp,
+			chDone:   make(chan bool),
+		}
+
+		// Forward targetOp to remote op
+		go func() {
+			rop.err = rop.targetOp.Wait()
+			close(rop.chDone)
+		}()
+
+		return &rop, nil
+	}
+
 	// Pull mode migration
 	req.Source.Type = "migration"
 	req.Source.Mode = "pull"
