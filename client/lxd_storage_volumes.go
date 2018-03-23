@@ -94,14 +94,79 @@ func (r *ProtocolLXD) CreateStoragePoolVolume(pool string, volume api.StorageVol
 	return nil
 }
 
+// MigrateStoragePoolVolume requests that LXD prepares for a storage volume migration
+func (r *ProtocolLXD) MigrateStoragePoolVolume(pool string, volume api.StorageVolumePost) (Operation, error) {
+	// Sanity check
+	if !volume.Migration {
+		return nil, fmt.Errorf("Can't ask for a rename through MigrateStoragePoolVolume")
+	}
+
+	// Send the request
+	op, _, err := r.queryOperation("POST", fmt.Sprintf("/storage-pools/%s/volumes/custom/%s", url.QueryEscape(pool), volume.Name), volume, "")
+	if err != nil {
+		return nil, err
+	}
+
+	return op, nil
+}
+
+func (r *ProtocolLXD) tryMigrateStoragePoolVolume(pool string, req api.StorageVolumesPost, urls []string) (RemoteOperation, error) {
+	if len(urls) == 0 {
+		return nil, fmt.Errorf("The source server isn't listening on the network")
+	}
+
+	rop := remoteOperation{
+		chDone: make(chan bool),
+	}
+
+	operation := req.Source.Operation
+
+	// Forward targetOp to remote op
+	go func() {
+		success := false
+		errors := []string{}
+		for _, serverURL := range urls {
+			req.Source.Operation = fmt.Sprintf("%s/1.0/operations/%s", serverURL, url.QueryEscape(operation))
+
+			// Send the request
+			top, _, err := r.queryOperation("POST", fmt.Sprintf("/storage-pools/%s/volumes/%s", url.QueryEscape(pool), url.QueryEscape(req.Type)), req, "")
+			if err != nil {
+				continue
+			}
+
+			rop := remoteOperation{
+				targetOp: top,
+				chDone:   make(chan bool),
+			}
+
+			for _, handler := range rop.handlers {
+				rop.targetOp.AddHandler(handler)
+			}
+
+			err = rop.targetOp.Wait()
+			if err != nil {
+				errors = append(errors, fmt.Sprintf("%s: %v", serverURL, err))
+				continue
+			}
+
+			success = true
+			break
+		}
+
+		if !success {
+			rop.err = fmt.Errorf("Failed storage volume creation:\n - %s", strings.Join(errors, "\n - "))
+		}
+
+		close(rop.chDone)
+	}()
+
+	return &rop, nil
+}
+
 // CopyStoragePoolVolume copies an existing storage volume
 func (r *ProtocolLXD) CopyStoragePoolVolume(pool string, source ContainerServer, sourcePool string, volume api.StorageVolume, args *StoragePoolVolumeCopyArgs) (RemoteOperation, error) {
 	if !r.HasExtension("storage_api_local_volume_handling") {
 		return nil, fmt.Errorf("The server is missing the required \"storage_api_local_volume_handling\" API extension")
-	}
-
-	if r != source {
-		return nil, fmt.Errorf("Copying storage volumes between remotes is not implemented")
 	}
 
 	req := api.StorageVolumesPost{
@@ -114,24 +179,60 @@ func (r *ProtocolLXD) CopyStoragePoolVolume(pool string, source ContainerServer,
 		},
 	}
 
-	// Send the request
-	op, _, err := r.queryOperation("POST", fmt.Sprintf("/storage-pools/%s/volumes/%s", url.QueryEscape(pool), url.QueryEscape(volume.Type)), req, "")
+	if r == source {
+		// Send the request
+		op, _, err := r.queryOperation("POST", fmt.Sprintf("/storage-pools/%s/volumes/%s", url.QueryEscape(pool), url.QueryEscape(volume.Type)), req, "")
+		if err != nil {
+			return nil, err
+		}
+
+		rop := remoteOperation{
+			targetOp: op,
+			chDone:   make(chan bool),
+		}
+
+		// Forward targetOp to remote op
+		go func() {
+			rop.err = rop.targetOp.Wait()
+			close(rop.chDone)
+		}()
+
+		return &rop, nil
+	}
+
+	sourceReq := api.StorageVolumePost{
+		Migration: true,
+		Name:      volume.Name,
+		Pool:      sourcePool,
+	}
+
+	// Get source server connection information
+	info, err := source.GetConnectionInfo()
 	if err != nil {
 		return nil, err
 	}
 
-	rop := remoteOperation{
-		targetOp: op,
-		chDone:   make(chan bool),
+	// Get secrets from source server
+	op, err := source.MigrateStoragePoolVolume(sourcePool, sourceReq)
+	if err != nil {
+		return nil, err
+	}
+	opAPI := op.Get()
+
+	// Prepare source server secrets for remote
+	sourceSecrets := map[string]string{}
+	for k, v := range opAPI.Metadata {
+		sourceSecrets[k] = v.(string)
 	}
 
-	// Forward targetOp to remote op
-	go func() {
-		rop.err = rop.targetOp.Wait()
-		close(rop.chDone)
-	}()
+	// Pull mode migration
+	req.Source.Type = "migration"
+	req.Source.Mode = "pull"
+	req.Source.Operation = opAPI.ID
+	req.Source.Websockets = sourceSecrets
+	req.Source.Certificate = info.Certificate
 
-	return &rop, nil
+	return r.tryMigrateStoragePoolVolume(pool, req, info.Addresses)
 }
 
 // MoveStoragePoolVolume renames or moves an existing storage volume
