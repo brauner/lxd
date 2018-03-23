@@ -17,13 +17,13 @@ func NewStorageMigrationSource(storage storage) (*migrationSourceWs, error) {
 	var err error
 	ret.controlSecret, err = shared.RandomCryptoString()
 	if err != nil {
-		logger.Errorf("Failed to create secrect for control websocket")
+		logger.Errorf("Failed to create migration source secrect for control websocket")
 		return nil, err
 	}
 
 	ret.fsSecret, err = shared.RandomCryptoString()
 	if err != nil {
-		logger.Errorf("Failed to create secrect for filesystem websocket")
+		logger.Errorf("Failed to create migration source secrect for filesystem websocket")
 		return nil, err
 	}
 
@@ -44,14 +44,11 @@ func (s *migrationSourceWs) DoStorage(migrateOp *operation) error {
 		defer s.storage.StoragePoolVolumeUmount()
 	}
 
-	idmaps := make([]*migration.IDMapType, 0)
-
 	// The protocol says we have to send a header no matter what, so let's
 	// do that, but then immediately send an error.
 	myType := s.storage.MigrationType()
 	header := migration.MigrationHeader{
-		Fs:    &myType,
-		Idmap: idmaps,
+		Fs: &myType,
 	}
 
 	err = s.send(&header)
@@ -100,7 +97,6 @@ func (s *migrationSourceWs) DoStorage(migrateOp *operation) error {
 		logger.Errorf("Failed to send storage volume")
 		return abort(err)
 	}
-	driver.Cleanup()
 
 	msg := migration.MigrationControl{}
 	err = s.recv(&msg)
@@ -115,6 +111,7 @@ func (s *migrationSourceWs) DoStorage(migrateOp *operation) error {
 		return fmt.Errorf(*msg.Message)
 	}
 
+	logger.Debugf("Migration source finished transferring storage volume")
 	return nil
 }
 
@@ -136,21 +133,25 @@ func NewStorageMigrationSink(args *MigrationSinkArgs) (*migrationSink, error) {
 	if sink.push {
 		sink.dest.controlSecret, err = shared.RandomCryptoString()
 		if err != nil {
+			logger.Errorf("Failed to create migration sink secrect for control websocket")
 			return nil, err
 		}
 
 		sink.dest.fsSecret, err = shared.RandomCryptoString()
 		if err != nil {
+			logger.Errorf("Failed to create migration sink secrect for filesystem websocket")
 			return nil, err
 		}
 	} else {
 		sink.src.controlSecret, ok = args.Secrets["control"]
 		if !ok {
+			logger.Errorf("Missing migration sink secrect for control websocket")
 			return nil, fmt.Errorf("Missing control secret")
 		}
 
 		sink.src.fsSecret, ok = args.Secrets["fs"]
 		if !ok {
+			logger.Errorf("Missing migration sink secrect for filesystem websocket")
 			return nil, fmt.Errorf("Missing fs secret")
 		}
 	}
@@ -175,12 +176,14 @@ func (c *migrationSink) DoStorage(migrateOp *operation) error {
 	} else {
 		c.src.controlConn, err = c.connectWithSecret(c.src.controlSecret)
 		if err != nil {
+			logger.Errorf("Failed to connect migration sink control socket")
 			return err
 		}
 		defer c.src.disconnect()
 
 		c.src.fsConn, err = c.connectWithSecret(c.src.fsSecret)
 		if err != nil {
+			logger.Errorf("Failed to connect migration sink filesystem socket")
 			c.src.sendControl(err)
 			return err
 		}
@@ -203,6 +206,7 @@ func (c *migrationSink) DoStorage(migrateOp *operation) error {
 
 	header := migration.MigrationHeader{}
 	if err := receiver(&header); err != nil {
+		logger.Errorf("Failed to receive storage volume migration header")
 		controller(err)
 		return err
 	}
@@ -223,59 +227,31 @@ func (c *migrationSink) DoStorage(migrateOp *operation) error {
 
 	err = sender(&resp)
 	if err != nil {
+		logger.Errorf("Failed to send storage volume migration header")
 		controller(err)
 		return err
 	}
 
-	go func(c *migrationSink) {
-		fsTransfer := make(chan error)
-		go func() {
-			var fsConn *websocket.Conn
-			if c.push {
-				fsConn = c.dest.fsConn
-			} else {
-				fsConn = c.src.fsConn
-			}
-
-			err = mySink(fsConn, migrateOp, c.dest.storage)
-			if err != nil {
-				fsTransfer <- err
-				return
-			}
-
-			fsTransfer <- nil
-		}()
-
-		err := <-fsTransfer
-		if err != nil {
-			return
-		}
-	}(c)
-
-	var source <-chan migration.MigrationControl
+	var fsConn *websocket.Conn
 	if c.push {
-		source = c.dest.controlChannel()
+		fsConn = c.dest.fsConn
 	} else {
-		source = c.src.controlChannel()
+		fsConn = c.src.fsConn
 	}
 
-	for {
-		select {
-		case msg, ok := <-source:
-			if !ok {
-				disconnector()
-				return fmt.Errorf("Got error reading source")
-			}
-			if !*msg.Success {
-				disconnector()
-				return fmt.Errorf(*msg.Message)
-			} else {
-				logger.Debugf("Unknown message %v from source", msg)
-			}
-		}
+	err = mySink(fsConn, migrateOp, c.dest.storage)
+	if err != nil {
+		logger.Errorf("Failed to start storage volume migration sink")
+		controller(err)
+		return err
 	}
+
+	controller(nil)
+	logger.Debugf("Migration sink finished receiving storage volume")
+	return nil
 }
 
 func (s *migrationSourceWs) ConnectStorageTarget(target api.StorageVolumePostTarget) error {
+	logger.Debugf("Storage migration source is connecting")
 	return s.ConnectTarget(target.Certificate, target.Operation, target.Websockets)
 }
