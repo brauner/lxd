@@ -10,6 +10,7 @@ import (
 	"github.com/lxc/lxd/lxd/types"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/idmap"
+	"github.com/lxc/lxd/shared/logger"
 )
 
 // MigrationStorageSourceDriver defines the functions needed to implement a
@@ -62,7 +63,9 @@ func (s rsyncStorageSourceDriver) SendStorageVolume(conn *websocket.Conn, op *op
 	wrapper := StorageProgressReader(op, "fs_progress", volume.Name)
 	state := storage.GetState()
 	path := getStoragePoolVolumeMountPoint(pool.Name, volume.Name)
-	return RsyncSend(volume.Name, shared.AddSlash(path), conn, wrapper, bwlimit, state.OS.ExecPath)
+	path = shared.AddSlash(path)
+	logger.Debugf("Starting to send storage volume %s on storage pool %s from %s", volume.Name, pool.Name, path)
+	return RsyncSend(volume.Name, path, conn, wrapper, bwlimit, state.OS.ExecPath)
 }
 
 func (s rsyncStorageSourceDriver) SendWhileRunning(conn *websocket.Conn, op *operation, bwlimit string, containerOnly bool) error {
@@ -170,12 +173,9 @@ func rsyncStorageMigrationSink(conn *websocket.Conn, op *operation, storage stor
 
 	wrapper := StorageProgressWriter(op, "fs_progress", volume.Name)
 	path := getStoragePoolVolumeMountPoint(pool.Name, volume.Name)
-	err = RsyncRecv(shared.AddSlash(path), conn, wrapper)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	path = shared.AddSlash(path)
+	logger.Debugf("Starting to receive storage volume %s on storage pool %s into %s", volume.Name, pool.Name, path)
+	return RsyncRecv(path, conn, wrapper)
 }
 
 func rsyncMigrationSink(live bool, container container, snapshots []*migration.Snapshot, conn *websocket.Conn, srcIdmap *idmap.IdmapSet, op *operation, containerOnly bool) error {
