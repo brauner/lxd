@@ -280,6 +280,9 @@ type ImageCopyArgs struct {
 type StoragePoolVolumeCopyArgs struct {
 	// New name for the target
 	Name string
+
+	// The transfer mode, can be "pull" (default), "push" or "relay"
+	Mode string
 }
 
 // The StoragePoolVolumeMoveArgs struct is used to pass additional options

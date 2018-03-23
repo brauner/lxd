@@ -221,6 +221,11 @@ func doVolumeCreateOrCopy(d *Daemon, poolName string, req *api.StorageVolumesPos
 }
 
 func doVolumeMigration(d *Daemon, poolName string, req *api.StorageVolumesPost) Response {
+	// Validate migration mode
+	if req.Source.Mode != "pull" && req.Source.Mode != "push" {
+		return NotImplemented
+	}
+
 	storage, err := storagePoolVolumeDBCreateInternal(d.State(), poolName, req)
 	if err != nil {
 		return InternalError(err)
@@ -245,12 +250,18 @@ func doVolumeMigration(d *Daemon, poolName string, req *api.StorageVolumesPost) 
 		return InternalError(err)
 	}
 
+	push := false
+	if req.Source.Mode == "push" {
+		push = true
+	}
+
 	migrationArgs := MigrationSinkArgs{
 		Url: req.Source.Operation,
 		Dialer: websocket.Dialer{
 			TLSClientConfig: config,
 			NetDial:         shared.RFC3493Dialer},
 		Secrets: req.Source.Websockets,
+		Push:    push,
 		Storage: storage,
 	}
 
@@ -273,9 +284,17 @@ func doVolumeMigration(d *Daemon, poolName string, req *api.StorageVolumesPost) 
 		return nil
 	}
 
-	op, err := operationCreate(d.cluster, operationClassTask, "Copying storage volume", resources, nil, run, nil, nil)
-	if err != nil {
-		return InternalError(err)
+	var op *operation
+	if push {
+		op, err = operationCreate(d.cluster, operationClassWebsocket, "Creating storage volume", resources, sink.Metadata(), run, nil, sink.Connect)
+		if err != nil {
+			return InternalError(err)
+		}
+	} else {
+		op, err = operationCreate(d.cluster, operationClassTask, "Copying storage volume", resources, nil, run, nil, nil)
+		if err != nil {
+			return InternalError(err)
+		}
 	}
 
 	return OperationResponse(op)
@@ -371,6 +390,21 @@ func storagePoolVolumeTypePost(d *Daemon, r *http.Request) Response {
 
 		resources := map[string][]string{}
 		resources["storage"] = []string{volumeName}
+
+		if req.Target != nil {
+			// Push mode
+			err := ws.ConnectStorageTarget(*req.Target)
+			if err != nil {
+				return InternalError(err)
+			}
+
+			op, err := operationCreate(d.cluster, operationClassTask, "Migrating storage volume", resources, nil, ws.DoStorage, nil, nil)
+			if err != nil {
+				return InternalError(err)
+			}
+
+			return OperationResponse(op)
+		}
 
 		// Pull mode
 		op, err := operationCreate(d.cluster, operationClassWebsocket, "Migrating storage volume", resources, ws.Metadata(), ws.DoStorage, nil, ws.Connect)
