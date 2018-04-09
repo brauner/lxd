@@ -187,6 +187,10 @@ type storage interface {
 	ContainerSnapshotStart(c container) (bool, error)
 	ContainerSnapshotStop(c container) (bool, error)
 
+	ContainerBackupCreate(backup backup, sourceContainer container) error
+	ContainerBackupDelete(name string) error
+	ContainerBackupRename(backup backup, newName string) error
+
 	// For use in migrating snapshots.
 	ContainerSnapshotCreateEmpty(c container) error
 
@@ -580,6 +584,11 @@ func getStoragePoolVolumeMountPoint(poolName string, volumeName string) string {
 	return shared.VarPath("storage-pools", poolName, "custom", volumeName)
 }
 
+// ${LXD_DIR}/storage-pools/<pool>/backups/<backup_name>
+func getBackupMountPoint(poolName string, backupName string) string {
+	return shared.VarPath("storage-pools", poolName, "backups", backupName)
+}
+
 func createContainerMountpoint(mountPoint string, mountPointSymlink string, privileged bool) error {
 	var mode os.FileMode
 	if privileged {
@@ -710,6 +719,53 @@ func deleteSnapshotMountpoint(snapshotMountpoint string, snapshotsSymlinkTarget 
 
 	if couldRemove && shared.PathExists(snapshotsSymlink) {
 		err := os.Remove(snapshotsSymlink)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func createBackupMountpoint(backupMountpoint string, backupsSymlinkTarget string, backupsSymlink string) error {
+	backupMntPointExists := shared.PathExists(backupMountpoint)
+	mntPointSymlinkExist := shared.PathExists(backupsSymlink)
+
+	if !backupMntPointExists {
+		err := os.MkdirAll(backupMountpoint, 0711)
+		if err != nil {
+			return err
+		}
+	}
+
+	if !mntPointSymlinkExist {
+		err := os.Symlink(backupsSymlinkTarget, backupsSymlink)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func deleteBackupMountpoint(backupMountpoint string, backupsSymlinkTarget string, backupsSymlink string) error {
+	if shared.PathExists(backupMountpoint) {
+		err := os.Remove(backupMountpoint)
+		if err != nil {
+			return err
+		}
+	}
+
+	couldRemove := false
+	if shared.PathExists(backupsSymlinkTarget) {
+		err := os.Remove(backupsSymlinkTarget)
+		if err == nil {
+			couldRemove = true
+		}
+	}
+
+	if couldRemove && shared.PathExists(backupsSymlink) {
+		err := os.Remove(backupsSymlink)
 		if err != nil {
 			return err
 		}

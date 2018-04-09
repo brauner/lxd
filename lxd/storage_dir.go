@@ -1011,6 +1011,18 @@ func (s *storageDir) ContainerSnapshotStop(container container) (bool, error) {
 	return true, nil
 }
 
+func (s *storageDir) ContainerBackupCreate(backup backup, sourceContainer container) error {
+	return nil
+}
+
+func (s *storageDir) ContainerBackupDelete(name string) error {
+	return nil
+}
+
+func (s *storageDir) ContainerBackupRename(backup backup, newName string) error {
+	return nil
+}
+
 func (s *storageDir) ImageCreate(fingerprint string) error {
 	return nil
 }

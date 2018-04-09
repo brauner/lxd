@@ -33,6 +33,8 @@ var api10 = []Command{
 	containerExecCmd,
 	containerMetadataCmd,
 	containerMetadataTemplatesCmd,
+	containerBackupsCmd,
+	containerBackupCmd,
 	aliasCmd,
 	aliasesCmd,
 	eventsCmd,

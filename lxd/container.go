@@ -446,13 +446,14 @@ type container interface {
 	Stop(stateful bool) error
 	Unfreeze() error
 
-	// Snapshots & migration
+	// Snapshots & migration & backups
 	Restore(sourceContainer container, stateful bool) error
 	/* actionScript here is a script called action.sh in the stateDir, to
 	 * be passed to CRIU as --action-script
 	 */
 	Migrate(args *CriuMigrationArgs) error
 	Snapshots() ([]container, error)
+	Backups() ([]backup, error)
 
 	// Config handling
 	Rename(newName string) error
@@ -991,4 +992,53 @@ func containerLoadByName(s *state.State, name string) (container, error) {
 	}
 
 	return containerLXCLoad(s, args)
+}
+
+func containerBackupLoadByName(s *state.State, name string) (*backup, error) {
+	// Get the DB record
+	args, err := s.Cluster.ContainerGetBackup(name)
+	if err != nil {
+		return nil, err
+	}
+
+	c, err := containerLoadById(s, args.ContainerID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &backup{
+		state:            s,
+		container:        c,
+		id:               args.ID,
+		name:             name,
+		creationDate:     args.CreationDate,
+		expiryDate:       args.ExpiryDate,
+		containerOnly:    args.ContainerOnly,
+		optimizedStorage: args.OptimizedStorage,
+	}, nil
+}
+
+func containerBackupCreate(s *state.State, args db.ContainerBackupArgs,
+	sourceContainer container) error {
+	err := s.Cluster.ContainerBackupCreate(args)
+	if err != nil {
+		if err == db.ErrAlreadyDefined {
+			return fmt.Errorf("backup '%s' already exists", args.Name)
+		}
+		return err
+	}
+
+	b, err := containerBackupLoadByName(s, args.Name)
+	if err != nil {
+		return err
+	}
+
+	// Now create the empty snapshot
+	err = sourceContainer.Storage().ContainerBackupCreate(*b, sourceContainer)
+	if err != nil {
+		s.Cluster.ContainerBackupRemove(args.Name)
+		return err
+	}
+
+	return nil
 }
