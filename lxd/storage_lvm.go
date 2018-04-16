@@ -1068,6 +1068,67 @@ func (s *storageLvm) ContainerDelete(container container) error {
 		return err
 	}
 
+	if container.IsSnapshot() {
+		// Snapshots will return a empty list when calling Backups(). We need to
+		// find the correct backup by iterating over the container's backups.
+		ctName, snapshotName, _ := containerGetParentAndSnapshotName(container.Name())
+		ct, err := containerLoadByName(s.s, ctName)
+		if err != nil {
+			return err
+		}
+
+		backups, err := ct.Backups()
+		if err != nil {
+			return err
+		}
+
+		for _, backup := range backups {
+			if backup.ContainerOnly() {
+				// Skip container-only backups since they don't include
+				// snapshots
+				continue
+			}
+
+			parts := strings.Split(backup.Name(), "/")
+			err := s.ContainerBackupDelete(fmt.Sprintf("%s/%s/%s", ctName,
+				snapshotName, parts[1]))
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		backups, err := container.Backups()
+		if err != nil {
+			return err
+		}
+
+		for _, backup := range backups {
+			err := s.ContainerBackupDelete(backup.Name())
+			if err != nil {
+				return err
+			}
+			continue
+
+			if !backup.ContainerOnly() {
+				// Remove the snapshots
+				snapshots, err := container.Snapshots()
+				if err != nil {
+					return err
+				}
+
+				for _, snap := range snapshots {
+					ctName, snapshotName, _ := containerGetParentAndSnapshotName(snap.Name())
+					parts := strings.Split(backup.Name(), "/")
+					err := s.ContainerBackupDelete(fmt.Sprintf("%s/%s/%s", ctName,
+						snapshotName, parts[1]))
+					if err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+
 	logger.Debugf("Deleted LVM storage volume for container \"%s\" on storage pool \"%s\".", s.volume.Name, s.pool.Name)
 	return nil
 }
@@ -1306,6 +1367,43 @@ func (s *storageLvm) ContainerRename(container container, newContainerName strin
 				return err
 			}
 		}
+	}
+
+	// Rename backups
+	if !container.IsSnapshot() {
+		oldBackupPath := getBackupMountPoint(s.pool.Name, oldName)
+		newBackupPath := getBackupMountPoint(s.pool.Name, newContainerName)
+		if shared.PathExists(oldBackupPath) {
+			err = os.Rename(oldBackupPath, newBackupPath)
+			if err != nil {
+				return err
+			}
+		}
+
+		oldBackupSymlink := shared.VarPath("backups", oldName)
+		newBackupSymlink := shared.VarPath("backups", newContainerName)
+		if shared.PathExists(oldBackupSymlink) {
+			err := os.Remove(oldBackupSymlink)
+			if err != nil {
+				return err
+			}
+
+			err = os.Symlink(newBackupPath, newBackupSymlink)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	backups, err := container.Backups()
+	if err != nil {
+		return err
+	}
+
+	for _, backup := range backups {
+		backupName := strings.Split(backup.Name(), "/")[1]
+		newName := fmt.Sprintf("%s/%s", newContainerName, backupName)
+		s.ContainerBackupRename(backup, newName)
 	}
 
 	tryUndo = false
@@ -1562,14 +1660,184 @@ func (s *storageLvm) ContainerSnapshotCreateEmpty(snapshotContainer container) e
 }
 
 func (s *storageLvm) ContainerBackupCreate(backup backup, sourceContainer container) error {
+	logger.Debugf("Creating LVM storage volume for backup \"%s\" on storage pool \"%s\".", s.volume.Name, s.pool.Name)
+
+	// Create the path for the backup.
+	baseMntPoint := getBackupMountPoint(s.pool.Name, backup.Name())
+	targetBackupContainerMntPoint := fmt.Sprintf("%s/container",
+		baseMntPoint)
+	targetBackupSnapshotsMntPoint := fmt.Sprintf("%s/snapshots",
+		baseMntPoint)
+
+	err := os.MkdirAll(targetBackupContainerMntPoint, 0711)
+	if err != nil {
+		return err
+	}
+
+	if !backup.ContainerOnly() {
+		// Create path for snapshots as well.
+		err = os.MkdirAll(targetBackupSnapshotsMntPoint, 0711)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = s.createContainerBackup(backup, sourceContainer, true)
+	if err != nil {
+		return err
+	}
+
+	if !backup.ContainerOnly() {
+		// Backup snapshots
+		snaps, err := sourceContainer.Snapshots()
+		if err != nil {
+			return nil
+		}
+
+		for _, ct := range snaps {
+			err = s.createContainerBackup(backup, ct, true)
+			if err != nil {
+				return err
+			}
+
+			// Create path to snapshot
+			_, snapName, _ := containerGetParentAndSnapshotName(ct.Name())
+			err = os.MkdirAll(fmt.Sprintf("%s/%s", targetBackupSnapshotsMntPoint,
+				snapName), 0711)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	backupSymlink := shared.VarPath("backups", sourceContainer.Name())
+	backupSymlinkTarget := getBackupMountPoint(s.pool.Name, sourceContainer.Name())
+	if !shared.PathExists(backupSymlink) {
+		err = os.Symlink(backupSymlinkTarget, backupSymlink)
+		if err != nil {
+			return err
+		}
+	}
+
+	logger.Debugf("Created LVM storage volume for backup \"%s\" on storage pool \"%s\".", s.volume.Name, s.pool.Name)
 	return nil
 }
 
 func (s *storageLvm) ContainerBackupDelete(name string) error {
+	lvName := containerNameToLVName(name)
+	poolName := s.getOnDiskPoolName()
+
+	containerLvmDevPath := getLvmDevPath(poolName,
+		storagePoolVolumeAPIEndpointBackups, lvName)
+
+	lvExists, _ := storageLVExists(containerLvmDevPath)
+	if lvExists {
+		err := removeLV(poolName, storagePoolVolumeAPIEndpointBackups, lvName)
+		if err != nil {
+			return err
+		}
+	}
+
+	lvmBackupDeleteInternal(poolName, name)
+
 	return nil
 }
 
+func lvmBackupDeleteInternal(poolName string, backupName string) error {
+	backupContainerMntPoint := getBackupMountPoint(poolName, backupName)
+	if shared.PathExists(backupContainerMntPoint) {
+		err := os.RemoveAll(backupContainerMntPoint)
+		if err != nil {
+			return err
+		}
+	}
+
+	sourceContainerName, _, _ := containerGetParentAndSnapshotName(backupName)
+	backupContainerPath := getBackupMountPoint(poolName, sourceContainerName)
+	empty, _ := shared.PathIsEmpty(backupContainerPath)
+	if empty == true {
+		err := os.Remove(backupContainerPath)
+		if err != nil {
+			return err
+		}
+
+		backupSymlink := shared.VarPath("backups", sourceContainerName)
+		if shared.PathExists(backupSymlink) {
+			err := os.Remove(backupSymlink)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
 func (s *storageLvm) ContainerBackupRename(backup backup, newName string) error {
+	logger.Debugf("Renaming LVM storage volume for backup \"%s\" from %s -> %s.",
+		s.volume.Name, s.volume.Name, newName)
+
+	tryUndo := true
+
+	oldName := backup.Name()
+	oldLvmName := containerNameToLVName(oldName)
+	newLvmName := containerNameToLVName(newName)
+
+	err := s.renameLVByPath(oldLvmName, newLvmName, storagePoolVolumeAPIEndpointBackups)
+	if err != nil {
+		return fmt.Errorf("Failed to rename a backup LV, oldName='%s', newName='%s', err='%s'",
+			oldLvmName, newLvmName, err)
+	}
+	defer func() {
+		if tryUndo {
+			s.renameLVByPath(newLvmName, oldLvmName, storagePoolVolumeAPIEndpointBackups)
+		}
+	}()
+
+	if !backup.ContainerOnly() {
+		// Rename snapshot backups if they exist
+		snaps, err := backup.container.Snapshots()
+		if err != nil {
+			return err
+		}
+
+		for _, snap := range snaps {
+			ctName, snapshotName, _ := containerGetParentAndSnapshotName(snap.Name())
+			oldName := strings.Split(backup.Name(), "/")[1]
+			newName := strings.Split(newName, "/")[1]
+			oldLvmName := containerNameToLVName(fmt.Sprintf("%s/%s/%s", ctName,
+				snapshotName, oldName))
+			newLvmName := containerNameToLVName(fmt.Sprintf("%s/%s/%s", ctName,
+				snapshotName, newName))
+
+			exists, err := storageLVExists(oldLvmName)
+			if err != nil {
+				return err
+			}
+
+			if exists {
+				err := s.renameLVByPath(oldLvmName, newLvmName,
+					storagePoolVolumeAPIEndpointBackups)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	oldBackupMntPoint := getBackupMountPoint(s.pool.Name, oldName)
+	newBackupMntPoint := getBackupMountPoint(s.pool.Name, newName)
+
+	if shared.PathExists(oldBackupMntPoint) {
+		err = os.Rename(oldBackupMntPoint, newBackupMntPoint)
+		if err != nil {
+			return err
+		}
+	}
+
+	tryUndo = false
+
+	logger.Debugf("Renamed LVM storage volume for backup \"%s\" from %s -> %s.",
+		s.volume.Name, s.volume.Name, newName)
 	return nil
 }
 
