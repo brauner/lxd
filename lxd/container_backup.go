@@ -91,6 +91,37 @@ func containerBackupsPost(d *Daemon, r *http.Request) Response {
 		return BadRequest(err)
 	}
 
+	if req.Name == "" {
+		// come up with a name
+		backups, err := c.Backups()
+		if err != nil {
+			return BadRequest(err)
+		}
+
+		base := name + shared.SnapshotDelimiter + "backup"
+		length := len(base)
+		max := 0
+
+		for _, backup := range backups {
+			// Ignore backups not containing base
+			if !strings.HasPrefix(backup.Name(), base) {
+				continue
+			}
+
+			substr := backup.Name()[length:]
+			var num int
+			count, err := fmt.Sscanf(substr, "%d", &num)
+			if err != nil || count != 1 {
+				continue
+			}
+			if num >= max {
+				max = num + 1
+			}
+		}
+
+		req.Name = fmt.Sprintf("backup%d", max)
+	}
+
 	// Validate the name
 	if strings.Contains(req.Name, "/") {
 		return BadRequest(fmt.Errorf("Backup names may not contain slashes"))
@@ -118,6 +149,7 @@ func containerBackupsPost(d *Daemon, r *http.Request) Response {
 
 	resources := map[string][]string{}
 	resources["containers"] = []string{name}
+	resources["backups"] = []string{req.Name}
 
 	op, err := operationCreate(d.cluster, operationClassTask,
 		"Backing up container", resources, nil, backup, nil, nil)
