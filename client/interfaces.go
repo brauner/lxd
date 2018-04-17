@@ -108,6 +108,13 @@ type ContainerServer interface {
 	MigrateContainerSnapshot(containerName string, name string, container api.ContainerSnapshotPost) (op Operation, err error)
 	DeleteContainerSnapshot(containerName string, name string) (op Operation, err error)
 
+	GetContainerBackupNames(containerName string) (names []string, err error)
+	GetContainerBackups(containername string) (backups []api.ContainerBackup, err error)
+	GetContainerBackup(containerName string, name string) (backup *api.ContainerBackup, ETag string, err error)
+	CreateContainerBackup(containerName string, backup api.ContainerBackupsPost) (op Operation, err error)
+	RenameContainerBackup(containerName string, name string, backup api.ContainerBackupPost) (op Operation, err error)
+	DeleteContainerBackup(containerName string, name string) (op Operation, err error)
+
 	GetContainerState(name string) (state *api.ContainerState, ETag string, err error)
 	UpdateContainerState(name string, state api.ContainerStatePut, ETag string) (op Operation, err error)
 

@@ -1536,3 +1536,93 @@ func (r *ProtocolLXD) DeleteContainerConsoleLog(containerName string, args *Cont
 
 	return nil
 }
+
+// GetContainerBackupNames returns a list of backup names for the container
+func (r *ProtocolLXD) GetContainerBackupNames(containerName string) ([]string, error) {
+	urls := []string{}
+
+	// Fetch the raw value
+	_, err := r.queryStruct("GET", fmt.Sprintf("/containers/%s/backups",
+		url.QueryEscape(containerName)), nil, "", &urls)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse it
+	names := []string{}
+	for _, uri := range urls {
+		fields := strings.Split(uri, fmt.Sprintf("/containers/%s/backups/",
+			url.QueryEscape(containerName)))
+		names = append(names, fields[len(fields)-1])
+	}
+
+	return names, nil
+}
+
+// GetContainerBackups returns a list of backups for the container
+func (r *ProtocolLXD) GetContainerBackups(containerName string) ([]api.ContainerBackup, error) {
+	backups := []api.ContainerBackup{}
+
+	// Fetch the raw value
+	_, err := r.queryStruct("GET", fmt.Sprintf("/containers/%s/backups?recursion=1",
+		url.QueryEscape(containerName)), nil, "", &backups)
+	if err != nil {
+		return nil, err
+	}
+
+	return backups, nil
+}
+
+// GetContainerBackup returns a Backup struct for the provided container and backup names
+func (r *ProtocolLXD) GetContainerBackup(containerName string, name string) (
+	*api.ContainerBackup, string, error) {
+	backup := api.ContainerBackup{}
+
+	// Fetch the raw value
+	etag, err := r.queryStruct("GET", fmt.Sprintf("/containers/%s/backups/%s",
+		url.QueryEscape(containerName), url.QueryEscape(name)), nil, "", &backup)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return &backup, etag, nil
+}
+
+// CreateContainerBackup requests that LXD creates a new backup for the container
+func (r *ProtocolLXD) CreateContainerBackup(containerName string,
+	backup api.ContainerBackupsPost) (Operation, error) {
+	// Send the request
+	op, _, err := r.queryOperation("POST", fmt.Sprintf("/containers/%s/backups",
+		url.QueryEscape(containerName)), backup, "")
+	if err != nil {
+		return nil, err
+	}
+
+	return op, nil
+}
+
+// RenameContainerBackup requests that LXD renames the backup
+func (r *ProtocolLXD) RenameContainerBackup(containerName string, name string,
+	backup api.ContainerBackupPost) (Operation, error) {
+	// Send the request
+	op, _, err := r.queryOperation("POST", fmt.Sprintf("/containers/%s/backups/%s",
+		url.QueryEscape(containerName), url.QueryEscape(name)), backup, "")
+	if err != nil {
+		return nil, err
+	}
+
+	return op, nil
+}
+
+// DeleteContainerBackup requests that LXD deletes the container backup
+func (r *ProtocolLXD) DeleteContainerBackup(containerName string, name string) (
+	Operation, error) {
+	// Send the request
+	op, _, err := r.queryOperation("DELETE", fmt.Sprintf("/containers/%s/backups/%s",
+		url.QueryEscape(containerName), url.QueryEscape(name)), nil, "")
+	if err != nil {
+		return nil, err
+	}
+
+	return op, nil
+}
