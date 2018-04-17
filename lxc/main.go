@@ -94,6 +94,10 @@ For help with any of those, simply call them with --help.`))
 	execCmd := cmdExec{global: &globalCmd}
 	app.AddCommand(execCmd.Command())
 
+	// export sub-command
+	exportCmd := cmdExport{global: &globalCmd}
+	app.AddCommand(exportCmd.Command())
+
 	// file sub-command
 	fileCmd := cmdFile{global: &globalCmd}
 	app.AddCommand(fileCmd.Command())
