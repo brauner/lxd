@@ -1626,3 +1626,17 @@ func (r *ProtocolLXD) DeleteContainerBackup(containerName string, name string) (
 
 	return op, nil
 }
+
+func (r *ProtocolLXD) GetContainerBackupExport(containerName string, name string) (
+	*api.ContainerBackupExport, string, error) {
+	backupExport := api.ContainerBackupExport{}
+
+	// Fetch the raw value
+	etag, err := r.queryStruct("GET", fmt.Sprintf("/containers/%s/backups/%s/export",
+		url.QueryEscape(containerName), url.QueryEscape(name)), nil, "", &backupExport)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return &backupExport, etag, nil
+}

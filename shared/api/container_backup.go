@@ -10,7 +10,7 @@ type ContainerBackupsPost struct {
 	OptimizedStorage bool   `json:"optimized_storage" yaml:"optimized_storage"`
 }
 
-// ContainerBackup represents a LXD conainer backup
+// ContainerBackup represents a LXD container backup
 type ContainerBackup struct {
 	Name             string    `json:"name" yaml:"name"`
 	CreationDate     time.Time `json:"creation_date" yaml:"creation_date"`
@@ -23,4 +23,9 @@ type ContainerBackup struct {
 // container backup
 type ContainerBackupPost struct {
 	Name string `json:"name" yaml:"name"`
+}
+
+// ContainerBackupExport represents an exported LXD container
+type ContainerBackupExport struct {
+	Data []byte `json:"data" yaml:"data"`
 }

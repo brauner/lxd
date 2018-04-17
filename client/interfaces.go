@@ -114,6 +114,7 @@ type ContainerServer interface {
 	CreateContainerBackup(containerName string, backup api.ContainerBackupsPost) (op Operation, err error)
 	RenameContainerBackup(containerName string, name string, backup api.ContainerBackupPost) (op Operation, err error)
 	DeleteContainerBackup(containerName string, name string) (op Operation, err error)
+	GetContainerBackupExport(containerName string, name string) (export *api.ContainerBackupExport, ETag string, err error)
 
 	GetContainerState(name string) (state *api.ContainerState, ETag string, err error)
 	UpdateContainerState(name string, state api.ContainerStatePut, ETag string) (op Operation, err error)

@@ -94,12 +94,10 @@ var containerBackupCmd = Command{
 	delete: containerBackupDelete,
 }
 
-/*
 var containerBackupExportCmd = Command{
 	name: "containers/{name}/backups/{backupName}/export",
 	get:  containerBackupExportGet,
 }
-*/
 
 type containerAutostartList []container
 

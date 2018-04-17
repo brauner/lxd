@@ -71,6 +71,24 @@ func (b *backup) Delete() error {
 	return nil
 }
 
+// Dump dumps the container including its snapshots.
+func (b *backup) Dump() ([]byte, error) {
+	ourStart, err := b.container.StorageStart()
+	if err != nil {
+		return nil, err
+	}
+	if ourStart {
+		defer b.container.StorageStop()
+	}
+
+	data, err := b.container.Storage().ContainerBackupDump(*b)
+	if err != nil {
+		return nil, err
+	}
+
+	return data, nil
+}
+
 func (b *backup) Render() interface{} {
 	return &api.ContainerBackup{
 		Name:             b.name,

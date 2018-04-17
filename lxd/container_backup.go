@@ -273,3 +273,27 @@ func containerBackupDelete(d *Daemon, r *http.Request) Response {
 
 	return OperationResponse(op)
 }
+
+func containerBackupExportGet(d *Daemon, r *http.Request) Response {
+	name := mux.Vars(r)["name"]
+	backupName := mux.Vars(r)["backupName"]
+
+	// Handle requests targeted to a container on a different node
+	response, err := ForwardedResponseIfContainerIsRemote(d, r, name)
+	if err != nil {
+		return SmartError(err)
+	}
+	if response != nil {
+		return response
+	}
+
+	fullName := name + shared.SnapshotDelimiter + backupName
+	backup, err := containerBackupLoadByName(d.State(), fullName)
+
+	data, err := backup.Dump()
+	if err != nil {
+		return SmartError(err)
+	}
+
+	return SyncResponse(true, api.ContainerBackupExport{Data: data})
+}
