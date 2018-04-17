@@ -1865,6 +1865,10 @@ func (s *storageZfs) ContainerBackupRename(backup backup, newName string) error 
 	return nil
 }
 
+func (s *storageZfs) ContainerBackupDump(backup backup) ([]byte, error) {
+	return nil, nil
+}
+
 // - create temporary directory ${LXD_DIR}/images/lxd_images_
 // - create new zfs volume images/<fingerprint>
 // - mount the zfs volume on ${LXD_DIR}/images/lxd_images_

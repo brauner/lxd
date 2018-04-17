@@ -1251,6 +1251,10 @@ func (s *storageDir) ContainerBackupRename(backup backup, newName string) error 
 	return nil
 }
 
+func (s *storageDir) ContainerBackupDump(backup backup) ([]byte, error) {
+	return nil, nil
+}
+
 func (s *storageDir) ImageCreate(fingerprint string) error {
 	return nil
 }

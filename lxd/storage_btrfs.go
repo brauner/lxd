@@ -52,6 +52,11 @@ func getSnapshotSubvolumePath(poolName string, containerName string) string {
 	return shared.VarPath("storage-pools", poolName, "snapshots", containerName)
 }
 
+// ${LXD_DIR}/storage-pools/<pool>/backups
+func getBackupSubvolumePath(poolName string, backupName string) string {
+	return shared.VarPath("storage-pools", poolName, "backups", backupName)
+}
+
 // ${LXD_DIR}/storage-pools/<pool>/images
 func (s *storageBtrfs) getImageSubvolumePath(poolName string) string {
 	return shared.VarPath("storage-pools", poolName, "images")
@@ -1393,6 +1398,10 @@ func (s *storageBtrfs) ContainerBackupDelete(name string) error {
 
 func (s *storageBtrfs) ContainerBackupRename(backup backup, newName string) error {
 	return nil
+}
+
+func (s *storageBtrfs) ContainerBackupDump(backup backup) ([]byte, error) {
+	return nil, nil
 }
 
 func (s *storageBtrfs) ImageCreate(fingerprint string) error {
