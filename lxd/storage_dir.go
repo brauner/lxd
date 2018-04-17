@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -1252,7 +1254,27 @@ func (s *storageDir) ContainerBackupRename(backup backup, newName string) error 
 }
 
 func (s *storageDir) ContainerBackupDump(backup backup) ([]byte, error) {
-	return nil, nil
+	_, err := s.StoragePoolMount()
+	if err != nil {
+		return nil, err
+	}
+
+	source := s.pool.Config["source"]
+	if source == "" {
+		return nil, fmt.Errorf("no \"source\" property found for the storage pool")
+	}
+
+	backupMntPoint := getBackupMountPoint(s.pool.Name, "")
+
+	var buffer bytes.Buffer
+	cmd := exec.Command("tar", "-cJf", "-", "-C", backupMntPoint, backup.Name())
+	cmd.Stdout = &buffer
+	err = cmd.Run()
+	if err != nil {
+		return nil, err
+	}
+
+	return buffer.Bytes(), nil
 }
 
 func (s *storageDir) ImageCreate(fingerprint string) error {
