@@ -1142,9 +1142,11 @@ func (s *storageDir) ContainerBackupCreate(backup backup, sourceContainer contai
 		}
 
 		for _, ct := range snaps {
-			snapshotMntPoint := getSnapshotMountPoint(sourcePool,
-				ct.Name())
-			err = rsync(snapshotMntPoint, targetBackupSnapshotsMntPoint, bwlimit)
+			snapshotMntPoint := getSnapshotMountPoint(sourcePool, ct.Name())
+			_, snapName, _ := containerGetParentAndSnapshotName(ct.Name())
+			target := fmt.Sprintf("%s/%s", targetBackupSnapshotsMntPoint, snapName)
+
+			err = rsync(snapshotMntPoint, target, bwlimit)
 			if err != nil {
 				return err
 			}
