@@ -1269,7 +1269,15 @@ func (s *storageDir) ContainerBackupDump(backup backup) ([]byte, error) {
 	backupMntPoint := getBackupMountPoint(s.pool.Name, "")
 
 	var buffer bytes.Buffer
-	cmd := exec.Command("tar", "-cJf", "-", "-C", backupMntPoint, backup.Name())
+
+	args := []string{"-cJf", "-", "-C", backupMntPoint}
+	if backup.ContainerOnly() {
+		// Exclude snapshots directory
+		args = append(args, "--exclude", fmt.Sprintf("%s/snapshots", backup.Name()))
+	}
+	args = append(args, backup.Name())
+
+	cmd := exec.Command("tar", args...)
 	cmd.Stdout = &buffer
 	err = cmd.Run()
 	if err != nil {
