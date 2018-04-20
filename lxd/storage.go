@@ -729,53 +729,6 @@ func deleteSnapshotMountpoint(snapshotMountpoint string, snapshotsSymlinkTarget 
 	return nil
 }
 
-func createBackupMountpoint(backupMountpoint string, backupsSymlinkTarget string, backupsSymlink string) error {
-	backupMntPointExists := shared.PathExists(backupMountpoint)
-	mntPointSymlinkExist := shared.PathExists(backupsSymlink)
-
-	if !backupMntPointExists {
-		err := os.MkdirAll(backupMountpoint, 0711)
-		if err != nil {
-			return err
-		}
-	}
-
-	if !mntPointSymlinkExist {
-		err := os.Symlink(backupsSymlinkTarget, backupsSymlink)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func deleteBackupMountpoint(backupMountpoint string, backupsSymlinkTarget string, backupsSymlink string) error {
-	if shared.PathExists(backupMountpoint) {
-		err := os.Remove(backupMountpoint)
-		if err != nil {
-			return err
-		}
-	}
-
-	couldRemove := false
-	if shared.PathExists(backupsSymlinkTarget) {
-		err := os.Remove(backupsSymlinkTarget)
-		if err == nil {
-			couldRemove = true
-		}
-	}
-
-	if couldRemove && shared.PathExists(backupsSymlink) {
-		err := os.Remove(backupsSymlink)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 // ShiftIfNecessary sets the volatile.last_state.idmap key to the idmap last
 // used by the container.
 func ShiftIfNecessary(container container, srcIdmap *idmap.IdmapSet) error {

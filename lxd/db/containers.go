@@ -36,6 +36,8 @@ type ContainerArgs struct {
 	Stateful     bool
 }
 
+// ContainerBackupArgs is a value object holding all db-related details
+// about a backup.
 type ContainerBackupArgs struct {
 	// Don't set manually
 	ID int
@@ -948,6 +950,7 @@ WHERE containers.name=?`
 	return result, nil
 }
 
+// ContainerBackupCreate creates a new backup
 func (c *Cluster) ContainerBackupCreate(args ContainerBackupArgs) error {
 	_, err := c.ContainerBackupID(args.Name)
 	if err == nil {

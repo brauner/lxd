@@ -1107,23 +1107,24 @@ func (s *storageLvm) ContainerDelete(container container) error {
 			if err != nil {
 				return err
 			}
-			continue
 
-			if !backup.ContainerOnly() {
-				// Remove the snapshots
-				snapshots, err := container.Snapshots()
+			if backup.ContainerOnly() {
+				continue
+			}
+
+			// Remove the snapshots
+			snapshots, err := container.Snapshots()
+			if err != nil {
+				return err
+			}
+
+			for _, snap := range snapshots {
+				ctName, snapshotName, _ := containerGetParentAndSnapshotName(snap.Name())
+				parts := strings.Split(backup.Name(), "/")
+				err := s.ContainerBackupDelete(fmt.Sprintf("%s/%s/%s", ctName,
+					snapshotName, parts[1]))
 				if err != nil {
 					return err
-				}
-
-				for _, snap := range snapshots {
-					ctName, snapshotName, _ := containerGetParentAndSnapshotName(snap.Name())
-					parts := strings.Split(backup.Name(), "/")
-					err := s.ContainerBackupDelete(fmt.Sprintf("%s/%s/%s", ctName,
-						snapshotName, parts[1]))
-					if err != nil {
-						return err
-					}
 				}
 			}
 		}

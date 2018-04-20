@@ -1627,6 +1627,7 @@ func (r *ProtocolLXD) DeleteContainerBackup(containerName string, name string) (
 	return op, nil
 }
 
+// GetContainerBackupExport requests the container backup content
 func (r *ProtocolLXD) GetContainerBackupExport(containerName string, name string) (
 	*api.ContainerBackupExport, string, error) {
 	backupExport := api.ContainerBackupExport{}
