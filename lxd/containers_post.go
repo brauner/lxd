@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
@@ -528,6 +529,77 @@ func createFromCopy(d *Daemon, req *api.ContainersPost) Response {
 	return OperationResponse(op)
 }
 
+func createFromBackup(d *Daemon, req *api.ContainersPost) Response {
+	if len(req.Source.Data) == 0 {
+		return BadRequest(fmt.Errorf("must specify backup source"))
+	}
+
+	// Read backup.yaml files
+	bInfo, err := getBackupInfo(bytes.NewReader(req.Source.Data))
+	if err != nil {
+		return InternalError(err)
+	}
+
+	// Container args for the container
+	arg := db.ContainerArgs{
+		Description:  bInfo.BackupFile.Container.Description,
+		Config:       bInfo.BackupFile.Container.Config,
+		CreationDate: bInfo.BackupFile.Container.CreatedAt,
+		Devices:      bInfo.BackupFile.Container.Devices,
+		Ephemeral:    bInfo.BackupFile.Container.Ephemeral,
+		Name:         bInfo.BackupFile.Container.Name,
+		Profiles:     bInfo.BackupFile.Container.Profiles,
+		Stateful:     bInfo.BackupFile.Container.Stateful,
+		Ctype:        db.CTypeRegular,
+	}
+
+	architecture, err := osarch.ArchitectureId(bInfo.BackupFile.Container.Architecture)
+	if err != nil {
+		return InternalError(err)
+	}
+	arg.Architecture = architecture
+
+	args := []db.ContainerArgs{arg}
+
+	// Container args for snapshots
+	for _, snap := range bInfo.BackupFile.Snapshots {
+		arg := db.ContainerArgs{
+			Config:       snap.Config,
+			CreationDate: snap.CreationDate,
+			Devices:      snap.Devices,
+			Ephemeral:    snap.Ephemeral,
+			Name:         snap.Name,
+			Profiles:     snap.Profiles,
+			Stateful:     snap.Stateful,
+			Ctype:        db.CTypeSnapshot,
+		}
+
+		architecture, err := osarch.ArchitectureId(snap.Architecture)
+		if err != nil {
+			return InternalError(err)
+		}
+		arg.Architecture = architecture
+
+		args = append(args, arg)
+	}
+
+	run := func(op *operation) error {
+		_, err := containerCreateFromBackup(d.State(), args, *bInfo, req.Source.Data)
+		return err
+	}
+
+	resources := map[string][]string{}
+	resources["containers"] = []string{bInfo.BackupFile.Container.Name}
+
+	op, err := operationCreate(d.cluster, operationClassTask, "Restoring backup",
+		resources, nil, run, nil, nil)
+	if err != nil {
+		return InternalError(err)
+	}
+
+	return OperationResponse(op)
+}
+
 func containersPost(d *Daemon, r *http.Request) Response {
 	logger.Debugf("Responding to container create")
 
@@ -581,50 +653,52 @@ func containersPost(d *Daemon, r *http.Request) Response {
 		return BadRequest(fmt.Errorf("No storage pool found. Please create a new storage pool."))
 	}
 
-	if req.Name == "" {
-		cs, err := d.cluster.ContainersList(db.CTypeRegular)
-		if err != nil {
-			return SmartError(err)
-		}
-
-		i := 0
-		for {
-			i++
-			req.Name = strings.ToLower(petname.Generate(2, "-"))
-			if !shared.StringInSlice(req.Name, cs) {
-				break
+	if req.Source.Type != "backup" {
+		if req.Name == "" {
+			cs, err := d.cluster.ContainersList(db.CTypeRegular)
+			if err != nil {
+				return SmartError(err)
 			}
 
-			if i > 100 {
-				return InternalError(fmt.Errorf("couldn't generate a new unique name after 100 tries"))
+			i := 0
+			for {
+				i++
+				req.Name = strings.ToLower(petname.Generate(2, "-"))
+				if !shared.StringInSlice(req.Name, cs) {
+					break
+				}
+
+				if i > 100 {
+					return InternalError(fmt.Errorf("couldn't generate a new unique name after 100 tries"))
+				}
+			}
+			logger.Debugf("No name provided, creating %s", req.Name)
+		}
+
+		if req.Devices == nil {
+			req.Devices = types.Devices{}
+		}
+
+		if req.Config == nil {
+			req.Config = map[string]string{}
+		}
+
+		if req.InstanceType != "" {
+			conf, err := instanceParseType(req.InstanceType)
+			if err != nil {
+				return BadRequest(err)
+			}
+
+			for k, v := range conf {
+				if req.Config[k] == "" {
+					req.Config[k] = v
+				}
 			}
 		}
-		logger.Debugf("No name provided, creating %s", req.Name)
-	}
 
-	if req.Devices == nil {
-		req.Devices = types.Devices{}
-	}
-
-	if req.Config == nil {
-		req.Config = map[string]string{}
-	}
-
-	if req.InstanceType != "" {
-		conf, err := instanceParseType(req.InstanceType)
-		if err != nil {
-			return BadRequest(err)
+		if strings.Contains(req.Name, shared.SnapshotDelimiter) {
+			return BadRequest(fmt.Errorf("Invalid container name: '%s' is reserved for snapshots", shared.SnapshotDelimiter))
 		}
-
-		for k, v := range conf {
-			if req.Config[k] == "" {
-				req.Config[k] = v
-			}
-		}
-	}
-
-	if strings.Contains(req.Name, shared.SnapshotDelimiter) {
-		return BadRequest(fmt.Errorf("Invalid container name: '%s' is reserved for snapshots", shared.SnapshotDelimiter))
 	}
 
 	switch req.Source.Type {
@@ -636,6 +710,8 @@ func containersPost(d *Daemon, r *http.Request) Response {
 		return createFromMigration(d, &req)
 	case "copy":
 		return createFromCopy(d, &req)
+	case "backup":
+		return createFromBackup(d, &req)
 	default:
 		return BadRequest(fmt.Errorf("unknown source type %s", req.Source.Type))
 	}

@@ -113,6 +113,10 @@ type ContainerSource struct {
 	Operation  string            `json:"operation,omitempty" yaml:"operation,omitempty"`
 	Websockets map[string]string `json:"secrets,omitempty" yaml:"secrets,omitempty"`
 
+	// For "backup" type
+	// API extension: backup
+	Data []byte `json:"data,omitempty" yaml:"data,omitempty"`
+
 	// For "copy" type
 	Source string `json:"source,omitempty" yaml:"source,omitempty"`
 
