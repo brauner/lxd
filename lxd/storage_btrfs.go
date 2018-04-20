@@ -1404,6 +1404,10 @@ func (s *storageBtrfs) ContainerBackupDump(backup backup) ([]byte, error) {
 	return nil, nil
 }
 
+func (s *storageBtrfs) ContainerBackupLoad(container container, info backupInfo, data []byte) error {
+	return nil
+}
+
 func (s *storageBtrfs) ImageCreate(fingerprint string) error {
 	logger.Debugf("Creating BTRFS storage volume for image \"%s\" on storage pool \"%s\".", fingerprint, s.pool.Name)
 

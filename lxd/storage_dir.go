@@ -1287,6 +1287,10 @@ func (s *storageDir) ContainerBackupDump(backup backup) ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
+func (s *storageDir) ContainerBackupLoad(container container, info backupInfo, data []byte) error {
+	return nil
+}
+
 func (s *storageDir) ImageCreate(fingerprint string) error {
 	return nil
 }

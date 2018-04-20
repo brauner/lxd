@@ -206,6 +206,10 @@ func (s *storageMock) ContainerBackupDump(backup backup) ([]byte, error) {
 	return nil, nil
 }
 
+func (s *storageMock) ContainerBackupLoad(container container, info backupInfo, data []byte) error {
+	return nil
+}
+
 func (s *storageMock) ImageCreate(fingerprint string) error {
 	return nil
 }

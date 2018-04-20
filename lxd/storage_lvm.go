@@ -1845,6 +1845,10 @@ func (s *storageLvm) ContainerBackupDump(backup backup) ([]byte, error) {
 	return nil, nil
 }
 
+func (s *storageLvm) ContainerBackupLoad(container container, info backupInfo, data []byte) error {
+	return nil
+}
+
 func (s *storageLvm) ImageCreate(fingerprint string) error {
 	logger.Debugf("Creating LVM storage volume for image \"%s\" on storage pool \"%s\".", fingerprint, s.pool.Name)
 
