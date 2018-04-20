@@ -1288,6 +1288,58 @@ func (s *storageDir) ContainerBackupDump(backup backup) ([]byte, error) {
 }
 
 func (s *storageDir) ContainerBackupLoad(container container, info backupInfo, data []byte) error {
+	_, err := s.StoragePoolMount()
+	if err != nil {
+		return err
+	}
+
+	source := s.pool.Config["source"]
+	if source == "" {
+		return fmt.Errorf("no \"source\" property found for the storage pool")
+	}
+
+	// Create mountpoints
+	containerName, _, _ := containerGetParentAndSnapshotName(info.Name)
+	containerMntPoint := getContainerMountPoint(s.pool.Name, containerName)
+	err = createContainerMountpoint(containerMntPoint, container.Path(),
+		container.IsPrivileged())
+	if err != nil {
+		return err
+	}
+
+	// Extract container
+	buf := bytes.NewReader(data)
+	cmd := exec.Command("tar", "-xJf", "-", "--strip-components=3", "-C",
+		containerMntPoint, fmt.Sprintf("%s/container", info.Name))
+	cmd.Stdin = buf
+	err = cmd.Run()
+	if err != nil {
+		return err
+	}
+
+	if info.HasSnapshots {
+		// Create mountpoints
+		snapshotMntPoint := getSnapshotMountPoint(s.pool.Name, containerName)
+		snapshotMntPointSymlinkTarget := shared.VarPath("storage-pools", s.pool.Name,
+			"snapshots", containerName)
+		snapshotMntPointSymlink := shared.VarPath("snapshots", containerName)
+		err := createSnapshotMountpoint(snapshotMntPoint, snapshotMntPointSymlinkTarget,
+			snapshotMntPointSymlink)
+		if err != nil {
+			return err
+		}
+
+		// Extract snapshots
+		buf.Seek(0, 0)
+		cmd = exec.Command("tar", "-xJf", "-", "--strip-components=3", "-C",
+			snapshotMntPoint, fmt.Sprintf("%s/snapshots", info.Name))
+		cmd.Stdin = buf
+		err = cmd.Run()
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
