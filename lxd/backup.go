@@ -1,7 +1,15 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"io"
+	"os/exec"
+	"regexp"
+	"strings"
 	"time"
+
+	yaml "gopkg.in/yaml.v2"
 
 	"github.com/lxc/lxd/lxd/state"
 	"github.com/lxc/lxd/shared/api"
@@ -19,6 +27,12 @@ type backup struct {
 	expiryDate       time.Time
 	containerOnly    bool
 	optimizedStorage bool
+}
+
+type backupInfo struct {
+	Name         string
+	HasSnapshots bool
+	BackupFile   backupFile
 }
 
 // Rename renames a container backup.
@@ -121,4 +135,51 @@ func (b *backup) ContainerOnly() bool {
 
 func (b *backup) OptimizedStorage() bool {
 	return b.optimizedStorage
+}
+
+func getBackupInfo(r io.Reader) (*backupInfo, error) {
+	reSnapshots := regexp.MustCompile(`^([^/]+)/([^/]+)/snapshots/([^/]+)`)
+	reBackupFile := regexp.MustCompile(`^([^/]+)/([^/]+)/container/backup\.yaml$`)
+
+	var buf bytes.Buffer
+	cmd := exec.Command("unxz", "-")
+	cmd.Stdin = r
+	cmd.Stdout = &buf
+	err := cmd.Run()
+	if err != nil {
+		return nil, err
+	}
+
+	result := backupInfo{}
+	// Find backup file of container
+	tr := tar.NewReader(&buf)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break // End of archive
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		if reBackupFile.MatchString(hdr.Name) {
+			if result.Name == "" {
+				result.Name = strings.Join(reBackupFile.FindStringSubmatch(hdr.Name)[1:3], "/")
+			}
+
+			// Read backup file
+			var b bytes.Buffer
+			io.Copy(&b, tr)
+			err = yaml.Unmarshal(b.Bytes(), &result.BackupFile)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		if reSnapshots.MatchString(hdr.Name) {
+			result.HasSnapshots = true
+		}
+	}
+
+	return &result, nil
 }
