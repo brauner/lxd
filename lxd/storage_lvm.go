@@ -1728,6 +1728,8 @@ func (s *storageLvm) ContainerBackupDelete(name string) error {
 	lvName := containerNameToLVName(name)
 	poolName := s.getOnDiskPoolName()
 
+	defer lvmBackupDeleteInternal(poolName, name)
+
 	containerLvmDevPath := getLvmDevPath(poolName,
 		storagePoolVolumeAPIEndpointBackups, lvName)
 
@@ -1739,7 +1741,33 @@ func (s *storageLvm) ContainerBackupDelete(name string) error {
 		}
 	}
 
-	lvmBackupDeleteInternal(poolName, name)
+	cname, bname, _ := containerGetParentAndSnapshotName(name)
+
+	c, err := containerLoadByName(s.s, cname)
+	if err != nil {
+		return err
+	}
+
+	snaps, err := c.Snapshots()
+	if err != nil {
+		return err
+	}
+
+	// remove snapshot backups
+	for _, snap := range snaps {
+		lvName := containerNameToLVName(fmt.Sprintf("%s/%s", snap.Name(), bname))
+
+		containerLvmDevPath := getLvmDevPath(poolName,
+			storagePoolVolumeAPIEndpointBackups, lvName)
+
+		lvExists, _ := storageLVExists(containerLvmDevPath)
+		if lvExists {
+			err := removeLV(poolName, storagePoolVolumeAPIEndpointBackups, lvName)
+			if err != nil {
+				return err
+			}
+		}
+	}
 
 	return nil
 }
