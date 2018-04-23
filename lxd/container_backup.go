@@ -45,7 +45,7 @@ func containerBackupsGet(d *Daemon, r *http.Request) Response {
 	for _, backup := range backups {
 		if !recursion {
 			url := fmt.Sprintf("/%s/containers/%s/backups/%s",
-				version.APIVersion, cname, backup.Name())
+				version.APIVersion, cname, strings.Split(backup.Name(), "/")[1])
 			resultString = append(resultString, url)
 		} else {
 			render := backup.Render()
@@ -173,7 +173,8 @@ func containerBackupGet(d *Daemon, r *http.Request) Response {
 		return response
 	}
 
-	backup, err := containerBackupLoadByName(d.State(), backupName)
+	fullName := name + shared.SnapshotDelimiter + backupName
+	backup, err := containerBackupLoadByName(d.State(), fullName)
 	if err != nil {
 		return SmartError(err)
 	}
