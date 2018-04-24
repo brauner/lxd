@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1683,7 +1685,7 @@ func (s *storageLvm) ContainerBackupCreate(backup backup, sourceContainer contai
 		}
 	}
 
-	err = s.createContainerBackup(backup, sourceContainer, true)
+	err = s.createContainerBackup(backup, sourceContainer, false)
 	if err != nil {
 		return err
 	}
@@ -1696,7 +1698,7 @@ func (s *storageLvm) ContainerBackupCreate(backup backup, sourceContainer contai
 		}
 
 		for _, ct := range snaps {
-			err = s.createContainerBackup(backup, ct, true)
+			err = s.createContainerBackup(backup, ct, false)
 			if err != nil {
 				return err
 			}
@@ -1871,10 +1873,126 @@ func (s *storageLvm) ContainerBackupRename(backup backup, newName string) error 
 }
 
 func (s *storageLvm) ContainerBackupDump(backup backup) ([]byte, error) {
-	return nil, nil
+	poolName := s.getOnDiskPoolName()
+	mountFlags, mountOptions := lxdResolveMountoptions(s.getLvmMountOptions())
+	backupMntPoint := getBackupMountPoint(s.pool.Name, backup.Name())
+
+	// Mount container backup
+	containerLvmPath := getLvmDevPath(poolName, storagePoolVolumeAPIEndpointBackups,
+		containerNameToLVName(backup.Name()))
+	mntPoint := fmt.Sprintf("%s/container", backupMntPoint)
+	err := tryMount(containerLvmPath, mntPoint, s.getLvmFilesystem(), mountFlags,
+		mountOptions)
+	if err != nil {
+		return nil, err
+	}
+	defer tryUnmount(mntPoint, 0)
+
+	if !backup.ContainerOnly() {
+		snaps, err := backup.container.Snapshots()
+		if err != nil {
+			return nil, err
+		}
+
+		for _, snap := range snaps {
+			cname, bname, _ := containerGetParentAndSnapshotName(backup.Name())
+			_, sname, _ := containerGetParentAndSnapshotName(snap.Name())
+			fullName := fmt.Sprintf("%s/%s/%s", cname, sname, bname)
+
+			// Mount snapshot backup
+			containerLvmPath := getLvmDevPath(poolName, storagePoolVolumeAPIEndpointBackups,
+				containerNameToLVName(fullName))
+			mntPoint := fmt.Sprintf("%s/snapshots/%s", backupMntPoint, sname)
+			err := tryMount(containerLvmPath, mntPoint, s.getLvmFilesystem(),
+				mountFlags, mountOptions)
+			if err != nil {
+				return nil, err
+			}
+			defer tryUnmount(mntPoint, 0)
+		}
+	}
+
+	var buffer bytes.Buffer
+
+	args := []string{"-cJf", "-", "-C", getBackupMountPoint(s.pool.Name, "")}
+	if backup.ContainerOnly() {
+		// Exclude snapshots directory
+		args = append(args, "--exclude", fmt.Sprintf("%s/snapshots", backup.Name()))
+	}
+	args = append(args, backup.Name())
+
+	// Create tarball
+	cmd := exec.Command("tar", args...)
+	cmd.Stdout = &buffer
+	err = cmd.Run()
+	if err != nil {
+		return nil, err
+	}
+
+	return buffer.Bytes(), nil
 }
 
 func (s *storageLvm) ContainerBackupLoad(container container, info backupInfo, data []byte) error {
+	// Create container
+	err := s.ContainerCreate(container)
+	if err != nil {
+		return err
+	}
+
+	// Mount container
+	_, err = s.ContainerMount(container)
+	if err != nil {
+		return err
+	}
+	defer s.ContainerUmount(container.Name(), "")
+
+	containerName, _, _ := containerGetParentAndSnapshotName(info.Name)
+	containerMntPoint := getContainerMountPoint(s.pool.Name, containerName)
+
+	// Extract container
+	buf := bytes.NewReader(data)
+	cmd := exec.Command("tar", "-xJf", "-", "--strip-components=3", "-C",
+		containerMntPoint, fmt.Sprintf("%s/container", info.Name))
+	cmd.Stdin = buf
+	err = cmd.Run()
+	if err != nil {
+		return err
+	}
+
+	if info.HasSnapshots {
+		snaps, err := container.Snapshots()
+		if err != nil {
+			return err
+		}
+
+		// Create snapshots
+		for _, snap := range snaps {
+			err := s.ContainerCreate(snap)
+			if err != nil {
+				return err
+			}
+
+			// Mount snapshot
+			_, err = s.ContainerMount(snap)
+			if err != nil {
+				return err
+			}
+			defer s.ContainerUmount(snap.Name(), "")
+		}
+
+		snapshotMntPoint := getSnapshotMountPoint(s.pool.Name, containerName)
+
+		// Extract snapshots
+		buf.Seek(0, 0)
+		cmd = exec.Command("tar", "-xJf", "-", "--strip-components=3", "-C",
+			snapshotMntPoint, fmt.Sprintf("%s/snapshots", info.Name))
+		cmd.Stdin = buf
+		err = cmd.Run()
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
