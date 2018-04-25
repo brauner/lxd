@@ -534,9 +534,13 @@ func createFromBackup(d *Daemon, req *api.ContainersPost) Response {
 		return BadRequest(fmt.Errorf("must specify backup source"))
 	}
 
-	// Read backup.yaml files
+	// Get information about the backup tarball
 	bInfo, err := getBackupInfo(bytes.NewReader(req.Source.Data))
+
 	if err != nil {
+		if err == ErrMissingBackupFile {
+			return BadRequest(err)
+		}
 		return InternalError(err)
 	}
 

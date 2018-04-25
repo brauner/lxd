@@ -13,7 +13,10 @@ import (
 
 	"github.com/lxc/lxd/lxd/state"
 	"github.com/lxc/lxd/shared/api"
+	"github.com/pkg/errors"
 )
+
+var ErrMissingBackupFile = errors.New("missing backup.yaml")
 
 // backup represents a container backup.
 type backup struct {
@@ -150,6 +153,7 @@ func getBackupInfo(r io.Reader) (*backupInfo, error) {
 		return nil, err
 	}
 
+	hasBackupFile := false
 	result := backupInfo{}
 	// Find backup file of container
 	tr := tar.NewReader(&buf)
@@ -174,11 +178,19 @@ func getBackupInfo(r io.Reader) (*backupInfo, error) {
 			if err != nil {
 				return nil, err
 			}
+
+			// Mark backup.yaml as found
+			hasBackupFile = true
 		}
 
 		if reSnapshots.MatchString(hdr.Name) {
 			result.HasSnapshots = true
 		}
+	}
+
+	// Fail if there was no backup.yaml
+	if !hasBackupFile {
+		return nil, ErrMissingBackupFile
 	}
 
 	return &result, nil
