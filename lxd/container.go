@@ -576,33 +576,20 @@ func containerCreateAsEmpty(d *Daemon, args db.ContainerArgs) (container, error)
 	return c, nil
 }
 
-func containerCreateFromBackup(s *state.State, args []db.ContainerArgs, info backupInfo,
-	data []byte) (container, error) {
-	var ct container
-	// Create the container and snapshots
-	for _, arg := range args {
-		// Don't create snapshots if the backup doesn't contain any
-		if !info.HasSnapshots && arg.Ctype == db.CTypeSnapshot {
-			continue
-		}
-
-		c, err := containerCreateInternal(s, arg)
-		if err != nil {
-			return nil, err
-		}
-
-		// Use the container (not a snapshot) for the storage part
-		if arg.Ctype == db.CTypeRegular {
-			ct = c
-		}
-	}
-
-	err := ct.Storage().ContainerBackupLoad(ct, info, data)
+func containerCreateFromBackup(s *state.State, info backupInfo, data []byte) error {
+	// Use default pool since the backup doesn't know any pools
+	st, err := storagePoolInit(s, "default")
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return ct, nil
+	// Unpack tarball
+	err = st.ContainerBackupLoad(info, data)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func containerCreateEmptySnapshot(s *state.State, args db.ContainerArgs) (container, error) {

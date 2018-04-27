@@ -191,7 +191,7 @@ type storage interface {
 	ContainerBackupDelete(name string) error
 	ContainerBackupRename(backup backup, newName string) error
 	ContainerBackupDump(backup backup) ([]byte, error)
-	ContainerBackupLoad(container container, info backupInfo, data []byte) error
+	ContainerBackupLoad(info backupInfo, data []byte) error
 
 	// For use in migrating snapshots.
 	ContainerSnapshotCreateEmpty(c container) error

@@ -1932,60 +1932,27 @@ func (s *storageLvm) ContainerBackupDump(backup backup) ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-func (s *storageLvm) ContainerBackupLoad(container container, info backupInfo, data []byte) error {
-	// Create container
-	err := s.ContainerCreate(container)
-	if err != nil {
-		return err
-	}
-
-	// Mount container
-	_, err = s.ContainerMount(container)
-	if err != nil {
-		return err
-	}
-	defer s.ContainerUmount(container.Name(), "")
-
+func (s *storageLvm) ContainerBackupLoad(info backupInfo, data []byte) error {
 	containerName, _, _ := containerGetParentAndSnapshotName(info.Name)
 	containerMntPoint := getContainerMountPoint(s.pool.Name, containerName)
 
 	// Extract container
 	buf := bytes.NewReader(data)
-	cmd := exec.Command("tar", "-xJf", "-", "--strip-components=3", "-C",
-		containerMntPoint, fmt.Sprintf("%s/container", info.Name))
+	cmd := exec.Command("tar", "-xJf", "-", "--strip-components=2", "-C",
+		containerMntPoint, "backup/container")
 	cmd.Stdin = buf
-	err = cmd.Run()
+	err := cmd.Run()
 	if err != nil {
 		return err
 	}
 
-	if info.HasSnapshots {
-		snaps, err := container.Snapshots()
-		if err != nil {
-			return err
-		}
-
-		// Create snapshots
-		for _, snap := range snaps {
-			err := s.ContainerCreate(snap)
-			if err != nil {
-				return err
-			}
-
-			// Mount snapshot
-			_, err = s.ContainerMount(snap)
-			if err != nil {
-				return err
-			}
-			defer s.ContainerUmount(snap.Name(), "")
-		}
-
+	if len(info.Snapshots) > 0 {
 		snapshotMntPoint := getSnapshotMountPoint(s.pool.Name, containerName)
 
 		// Extract snapshots
 		buf.Seek(0, 0)
-		cmd = exec.Command("tar", "-xJf", "-", "--strip-components=3", "-C",
-			snapshotMntPoint, fmt.Sprintf("%s/snapshots", info.Name))
+		cmd = exec.Command("tar", "-xJf", "-", "--strip-components=2", "-C",
+			snapshotMntPoint, "backup/snapshots")
 		cmd.Stdin = buf
 		err = cmd.Run()
 		if err != nil {

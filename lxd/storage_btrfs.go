@@ -1404,7 +1404,7 @@ func (s *storageBtrfs) ContainerBackupDump(backup backup) ([]byte, error) {
 	return nil, nil
 }
 
-func (s *storageBtrfs) ContainerBackupLoad(container container, info backupInfo, data []byte) error {
+func (s *storageBtrfs) ContainerBackupLoad(info backupInfo, data []byte) error {
 	return nil
 }
 

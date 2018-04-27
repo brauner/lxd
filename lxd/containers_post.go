@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"strings"
 
 	"github.com/dustinkirkland/golang-petname"
 	"github.com/gorilla/websocket"
+	"github.com/pkg/errors"
 
 	"github.com/lxc/lxd/lxd/cluster"
 	"github.com/lxc/lxd/lxd/db"
@@ -534,66 +536,39 @@ func createFromBackup(d *Daemon, req *api.ContainersPost) Response {
 		return BadRequest(fmt.Errorf("must specify backup source"))
 	}
 
-	// Get information about the backup tarball
 	bInfo, err := getBackupInfo(bytes.NewReader(req.Source.Data))
-
 	if err != nil {
-		if err == ErrMissingBackupFile {
-			return BadRequest(err)
-		}
-		return InternalError(err)
-	}
-
-	// Container args for the container
-	arg := db.ContainerArgs{
-		Description:  bInfo.BackupFile.Container.Description,
-		Config:       bInfo.BackupFile.Container.Config,
-		CreationDate: bInfo.BackupFile.Container.CreatedAt,
-		Devices:      bInfo.BackupFile.Container.Devices,
-		Ephemeral:    bInfo.BackupFile.Container.Ephemeral,
-		Name:         bInfo.BackupFile.Container.Name,
-		Profiles:     bInfo.BackupFile.Container.Profiles,
-		Stateful:     bInfo.BackupFile.Container.Stateful,
-		Ctype:        db.CTypeRegular,
-	}
-
-	architecture, err := osarch.ArchitectureId(bInfo.BackupFile.Container.Architecture)
-	if err != nil {
-		return InternalError(err)
-	}
-	arg.Architecture = architecture
-
-	args := []db.ContainerArgs{arg}
-
-	// Container args for snapshots
-	for _, snap := range bInfo.BackupFile.Snapshots {
-		arg := db.ContainerArgs{
-			Config:       snap.Config,
-			CreationDate: snap.CreationDate,
-			Devices:      snap.Devices,
-			Ephemeral:    snap.Ephemeral,
-			Name:         snap.Name,
-			Profiles:     snap.Profiles,
-			Stateful:     snap.Stateful,
-			Ctype:        db.CTypeSnapshot,
-		}
-
-		architecture, err := osarch.ArchitectureId(snap.Architecture)
-		if err != nil {
-			return InternalError(err)
-		}
-		arg.Architecture = architecture
-
-		args = append(args, arg)
+		return BadRequest(err)
 	}
 
 	run := func(op *operation) error {
-		_, err := containerCreateFromBackup(d.State(), args, *bInfo, req.Source.Data)
-		return err
+		// Dump tarball to storage
+		err := containerCreateFromBackup(d.State(), *bInfo, req.Source.Data)
+		if err != nil {
+			return err
+		}
+
+		body, err := json.Marshal(&internalImportPost{
+			Name:  bInfo.Name,
+			Force: false,
+		})
+		if err != nil {
+			return err
+		}
+
+		resp := internalImport(d, &http.Request{
+			Body: ioutil.NopCloser(bytes.NewReader(body)),
+		})
+
+		if resp.String() != "success" {
+			return errors.New(resp.String())
+		}
+
+		return nil
 	}
 
 	resources := map[string][]string{}
-	resources["containers"] = []string{bInfo.BackupFile.Container.Name}
+	resources["containers"] = []string{bInfo.Name}
 
 	op, err := operationCreate(d.cluster, operationClassTask, "Restoring backup",
 		resources, nil, run, nil, nil)

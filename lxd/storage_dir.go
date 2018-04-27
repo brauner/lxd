@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/gorilla/websocket"
+	yaml "gopkg.in/yaml.v2"
 
 	"github.com/lxc/lxd/lxd/migration"
 	"github.com/lxc/lxd/lxd/state"
@@ -1166,6 +1167,41 @@ onSuccess:
 		}
 	}
 
+	// Create index.yaml containing information regarding the backup
+	file, err := os.Create(filepath.Join(baseMntPoint, "index.yaml"))
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	indexFile := backupInfo{
+		Name:       sourceContainer.Name(),
+		Backend:    "dir",
+		Privileged: sourceContainer.IsPrivileged(),
+		Snapshots:  []string{},
+	}
+
+	if !backup.ContainerOnly() {
+		snaps, err := sourceContainer.Snapshots()
+		if err != nil {
+			return err
+		}
+		for _, snap := range snaps {
+			_, snapName, _ := containerGetParentAndSnapshotName(snap.Name())
+			indexFile.Snapshots = append(indexFile.Snapshots, snapName)
+		}
+	}
+
+	data, err := yaml.Marshal(&indexFile)
+	if err != nil {
+		return err
+	}
+
+	_, err = file.Write(data)
+	if err != nil {
+		return err
+	}
+
 	logger.Debugf("Created DIR storage volume for backup \"%s\" on storage pool \"%s\".",
 		backup.Name(), s.pool.Name)
 	return nil
@@ -1266,16 +1302,16 @@ func (s *storageDir) ContainerBackupDump(backup backup) ([]byte, error) {
 		return nil, fmt.Errorf("no \"source\" property found for the storage pool")
 	}
 
-	backupMntPoint := getBackupMountPoint(s.pool.Name, "")
+	backupMntPoint := getBackupMountPoint(s.pool.Name, backup.Name())
 
 	var buffer bytes.Buffer
 
-	args := []string{"-cJf", "-", "-C", backupMntPoint}
+	args := []string{"-cJf", "-", "-C", backupMntPoint, "--transform", "s,^./,backup/,"}
 	if backup.ContainerOnly() {
 		// Exclude snapshots directory
 		args = append(args, "--exclude", fmt.Sprintf("%s/snapshots", backup.Name()))
 	}
-	args = append(args, backup.Name())
+	args = append(args, ".")
 
 	cmd := exec.Command("tar", args...)
 	cmd.Stdout = &buffer
@@ -1287,7 +1323,7 @@ func (s *storageDir) ContainerBackupDump(backup backup) ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-func (s *storageDir) ContainerBackupLoad(container container, info backupInfo, data []byte) error {
+func (s *storageDir) ContainerBackupLoad(info backupInfo, data []byte) error {
 	_, err := s.StoragePoolMount()
 	if err != nil {
 		return err
@@ -1299,30 +1335,29 @@ func (s *storageDir) ContainerBackupLoad(container container, info backupInfo, d
 	}
 
 	// Create mountpoints
-	containerName, _, _ := containerGetParentAndSnapshotName(info.Name)
-	containerMntPoint := getContainerMountPoint(s.pool.Name, containerName)
-	err = createContainerMountpoint(containerMntPoint, container.Path(),
-		container.IsPrivileged())
+	containerMntPoint := getContainerMountPoint(s.pool.Name, info.Name)
+	err = createContainerMountpoint(containerMntPoint, containerPath(info.Name, false),
+		info.Privileged)
 	if err != nil {
 		return err
 	}
 
 	// Extract container
 	buf := bytes.NewReader(data)
-	cmd := exec.Command("tar", "-xJf", "-", "--strip-components=3", "-C",
-		containerMntPoint, fmt.Sprintf("%s/container", info.Name))
+	cmd := exec.Command("tar", "-xJf", "-", "--strip-components=2", "-C",
+		containerMntPoint, "backup/container")
 	cmd.Stdin = buf
 	err = cmd.Run()
 	if err != nil {
 		return err
 	}
 
-	if info.HasSnapshots {
+	if len(info.Snapshots) > 0 {
 		// Create mountpoints
-		snapshotMntPoint := getSnapshotMountPoint(s.pool.Name, containerName)
+		snapshotMntPoint := getSnapshotMountPoint(s.pool.Name, info.Name)
 		snapshotMntPointSymlinkTarget := shared.VarPath("storage-pools", s.pool.Name,
-			"snapshots", containerName)
-		snapshotMntPointSymlink := shared.VarPath("snapshots", containerName)
+			"snapshots", info.Name)
+		snapshotMntPointSymlink := shared.VarPath("snapshots", info.Name)
 		err := createSnapshotMountpoint(snapshotMntPoint, snapshotMntPointSymlinkTarget,
 			snapshotMntPointSymlink)
 		if err != nil {
@@ -1331,8 +1366,8 @@ func (s *storageDir) ContainerBackupLoad(container container, info backupInfo, d
 
 		// Extract snapshots
 		buf.Seek(0, 0)
-		cmd = exec.Command("tar", "-xJf", "-", "--strip-components=3", "-C",
-			snapshotMntPoint, fmt.Sprintf("%s/snapshots", info.Name))
+		cmd = exec.Command("tar", "-xJf", "-", "--strip-components=2", "-C",
+			snapshotMntPoint, "backup/snapshots")
 		cmd.Stdin = buf
 		err = cmd.Run()
 		if err != nil {

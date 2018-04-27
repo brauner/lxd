@@ -2100,11 +2100,11 @@ func (s *storageZfs) ContainerBackupDump(backup backup) ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-func (s *storageZfs) ContainerBackupLoad(container container, info backupInfo, data []byte) error {
+func (s *storageZfs) ContainerBackupLoad(info backupInfo, data []byte) error {
 	logger.Debugf("Loading ZFS storage volume for backup \"%s\" on storage pool \"%s\".", info.Name, s.pool.Name)
 	containerName, _, _ := containerGetParentAndSnapshotName(info.Name)
 	containerMntPoint := getContainerMountPoint(s.pool.Name, containerName)
-	err := createContainerMountpoint(containerMntPoint, container.Path(), container.IsPrivileged())
+	err := createContainerMountpoint(containerMntPoint, containerPath(info.Name, false), info.Privileged)
 	if err != nil {
 		return err
 	}
@@ -2127,7 +2127,7 @@ func (s *storageZfs) ContainerBackupLoad(container container, info backupInfo, d
 	}
 
 	poolName := s.getOnDiskPoolName()
-	if info.HasSnapshots {
+	if len(info.Snapshots) > 0 {
 		snapshotsPath := fmt.Sprintf("%s/snapshots", unpackPath)
 		snapNames, err := ioutil.ReadDir(snapshotsPath)
 		if err != nil {

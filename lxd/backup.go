@@ -5,8 +5,6 @@ import (
 	"bytes"
 	"io"
 	"os/exec"
-	"regexp"
-	"strings"
 	"time"
 
 	yaml "gopkg.in/yaml.v2"
@@ -16,7 +14,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-var ErrMissingBackupFile = errors.New("missing backup.yaml")
+var ErrMissingIndexFile = errors.New("missing index.yaml")
 
 // backup represents a container backup.
 type backup struct {
@@ -33,9 +31,10 @@ type backup struct {
 }
 
 type backupInfo struct {
-	Name         string
-	HasSnapshots bool
-	BackupFile   backupFile
+	Name       string   `json:"name" yaml:"name"`
+	Backend    string   `json:"backend" yaml:"backend"`
+	Privileged bool     `json:"privileged" yaml:"privileged"`
+	Snapshots  []string `json:"snapshots,omitempty" yaml:"snapshots,omitempty"`
 }
 
 // Rename renames a container backup.
@@ -141,9 +140,6 @@ func (b *backup) OptimizedStorage() bool {
 }
 
 func getBackupInfo(r io.Reader) (*backupInfo, error) {
-	reSnapshots := regexp.MustCompile(`^([^/]+)/([^/]+)/snapshots/([^/]+)`)
-	reBackupFile := regexp.MustCompile(`^([^/]+)/([^/]+)/container/backup\.yaml$`)
-
 	var buf bytes.Buffer
 	cmd := exec.Command("unxz", "-")
 	cmd.Stdin = r
@@ -153,9 +149,6 @@ func getBackupInfo(r io.Reader) (*backupInfo, error) {
 		return nil, err
 	}
 
-	hasBackupFile := false
-	result := backupInfo{}
-	// Find backup file of container
 	tr := tar.NewReader(&buf)
 	for {
 		hdr, err := tr.Next()
@@ -166,32 +159,15 @@ func getBackupInfo(r io.Reader) (*backupInfo, error) {
 			return nil, err
 		}
 
-		if reBackupFile.MatchString(hdr.Name) {
-			if result.Name == "" {
-				result.Name = strings.Join(reBackupFile.FindStringSubmatch(hdr.Name)[1:3], "/")
-			}
-
-			// Read backup file
-			var b bytes.Buffer
-			io.Copy(&b, tr)
-			err = yaml.Unmarshal(b.Bytes(), &result.BackupFile)
+		if hdr.Name == "backup/index.yaml" {
+			result := backupInfo{}
+			err = yaml.NewDecoder(tr).Decode(&result)
 			if err != nil {
 				return nil, err
 			}
-
-			// Mark backup.yaml as found
-			hasBackupFile = true
-		}
-
-		if reSnapshots.MatchString(hdr.Name) {
-			result.HasSnapshots = true
+			return &result, nil
 		}
 	}
 
-	// Fail if there was no backup.yaml
-	if !hasBackupFile {
-		return nil, ErrMissingBackupFile
-	}
-
-	return &result, nil
+	return nil, ErrMissingIndexFile
 }

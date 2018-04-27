@@ -2242,7 +2242,7 @@ func (s *storageCeph) ContainerBackupDump(backup backup) ([]byte, error) {
 	return nil, nil
 }
 
-func (s *storageCeph) ContainerBackupLoad(container container, info backupInfo, data []byte) error {
+func (s *storageCeph) ContainerBackupLoad(info backupInfo, data []byte) error {
 	return nil
 }
 
