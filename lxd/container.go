@@ -1056,5 +1056,12 @@ func containerBackupCreate(s *state.State, args db.ContainerBackupArgs,
 		return err
 	}
 
+	// Create index.yaml containing information regarding the backup
+	err = createBackupIndexFile(sourceContainer, *b)
+	if err != nil {
+		s.Cluster.ContainerBackupRemove(args.Name)
+		return err
+	}
+
 	return nil
 }

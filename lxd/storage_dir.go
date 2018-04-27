@@ -10,7 +10,6 @@ import (
 	"syscall"
 
 	"github.com/gorilla/websocket"
-	yaml "gopkg.in/yaml.v2"
 
 	"github.com/lxc/lxd/lxd/migration"
 	"github.com/lxc/lxd/lxd/state"
@@ -1165,41 +1164,6 @@ onSuccess:
 		if err != nil {
 			return err
 		}
-	}
-
-	// Create index.yaml containing information regarding the backup
-	file, err := os.Create(filepath.Join(baseMntPoint, "index.yaml"))
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	indexFile := backupInfo{
-		Name:       sourceContainer.Name(),
-		Backend:    "dir",
-		Privileged: sourceContainer.IsPrivileged(),
-		Snapshots:  []string{},
-	}
-
-	if !backup.ContainerOnly() {
-		snaps, err := sourceContainer.Snapshots()
-		if err != nil {
-			return err
-		}
-		for _, snap := range snaps {
-			_, snapName, _ := containerGetParentAndSnapshotName(snap.Name())
-			indexFile.Snapshots = append(indexFile.Snapshots, snapName)
-		}
-	}
-
-	data, err := yaml.Marshal(&indexFile)
-	if err != nil {
-		return err
-	}
-
-	_, err = file.Write(data)
-	if err != nil {
-		return err
 	}
 
 	logger.Debugf("Created DIR storage volume for backup \"%s\" on storage pool \"%s\".",

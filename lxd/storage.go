@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"sync"
 	"sync/atomic"
 
 	"github.com/gorilla/websocket"
+	yaml "gopkg.in/yaml.v2"
 
 	"github.com/lxc/lxd/lxd/db"
 	"github.com/lxc/lxd/lxd/migration"
@@ -913,4 +915,47 @@ func storagePoolDriversCacheUpdate(cluster *db.Cluster) {
 	storagePoolDriversCacheLock.Unlock()
 
 	return
+}
+
+func createBackupIndexFile(container container, backup backup) error {
+	pool, err := container.StoragePool()
+	if err != nil {
+		return err
+	}
+
+	file, err := os.Create(filepath.Join(getBackupMountPoint(pool, backup.Name()), "index.yaml"))
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	indexFile := backupInfo{
+		Name:       container.Name(),
+		Backend:    container.Storage().GetStorageTypeName(),
+		Privileged: container.IsPrivileged(),
+		Snapshots:  []string{},
+	}
+
+	if !backup.ContainerOnly() {
+		snaps, err := container.Snapshots()
+		if err != nil {
+			return err
+		}
+		for _, snap := range snaps {
+			_, snapName, _ := containerGetParentAndSnapshotName(snap.Name())
+			indexFile.Snapshots = append(indexFile.Snapshots, snapName)
+		}
+	}
+
+	data, err := yaml.Marshal(&indexFile)
+	if err != nil {
+		return err
+	}
+
+	_, err = file.Write(data)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
