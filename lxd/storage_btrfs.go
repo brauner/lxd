@@ -1435,10 +1435,9 @@ func (s *storageBtrfs) ContainerBackupCreate(backup backup, source container) er
 	baseMntPoint := getBackupMountPoint(s.pool.Name, backup.Name())
 
 	// /var/lib/lxd/storage-pools/<pool>/backups/<container>/container
-	targetBackupContainerMntPoint := fmt.Sprintf("%s/container", baseMntPoint)
-	err = os.MkdirAll(targetBackupContainerMntPoint, 0711)
+	err = os.MkdirAll(baseMntPoint, 0711)
 	if err != nil {
-		logger.Errorf("Failed to create directory \"%s\": %s", targetBackupContainerMntPoint, err)
+		logger.Errorf("Failed to create directory \"%s\": %s", baseMntPoint, err)
 		return err
 	}
 
@@ -1466,7 +1465,7 @@ func (s *storageBtrfs) ContainerBackupCreate(backup backup, source container) er
 			_, snapOnlyName, _ := containerGetParentAndSnapshotName(snap.Name())
 
 			// /var/lib/lxd/storage-pools/<pool>/backups/<container>/snapshots/<snapshot>
-			target := fmt.Sprintf("%s/%d-%s", targetBackupSnapshotsMntPoint, i, snapOnlyName)
+			target := fmt.Sprintf("%s/%s.bin", targetBackupSnapshotsMntPoint, snapOnlyName)
 			err := s.doBtrfsBackup(cur, prev, target)
 			if err != nil {
 				logger.Errorf("Failed to btrfs send snapshot \"%s\" -p \"%s\" to \"%s\": %s", cur, prev, target, err)
@@ -1504,22 +1503,12 @@ func (s *storageBtrfs) ContainerBackupCreate(backup backup, source container) er
 	defer btrfsSubVolumesDelete(targetVolume)
 
 	// /var/lib/lxd/storage-pools/<pool>/backups/<container>/container/<container>
-	fsDump := fmt.Sprintf("%s/%s", targetBackupContainerMntPoint, source.Name())
+	fsDump := fmt.Sprintf("%s/container.bin", baseMntPoint)
 	err = s.doBtrfsBackup(targetVolume, finalParent, fsDump)
 	if err != nil {
 		logger.Errorf("Failed to btrfs send container \"%s\" -p \"%s\" to \"%s\": %s", targetVolume, finalParent, fsDump, err)
 		return err
 	}
-	logger.Debugf("Performed btrfs send container \"%s\" -p \"%s\" to \"%s\"", targetVolume, finalParent, fsDump)
-
-	// place a copy of backup.yaml along side the container zfs dump
-	sourceBackupYaml := shared.VarPath("containers", source.Name(), "backup.yaml")
-	targetBackupYaml := fmt.Sprintf("%s/backup.yaml", targetBackupContainerMntPoint)
-	err = shared.FileCopy(sourceBackupYaml, targetBackupYaml)
-	if err != nil {
-		return err
-	}
-	logger.Debugf("Copied btrfs backup.yaml file from \"%s\" to \"%s\"", sourceBackupYaml, targetBackupYaml)
 
 	logger.Debugf("Created BTRFS storage volume for backup \"%s\" on storage pool \"%s\".", backup.Name(), s.pool.Name)
 	return nil
@@ -1567,20 +1556,18 @@ func (s *storageBtrfs) ContainerBackupRename(backup backup, newName string) erro
 }
 
 func (s *storageBtrfs) ContainerBackupDump(backup backup) ([]byte, error) {
-	backupMntPoint := getBackupMountPoint(s.pool.Name, "")
+	backupMntPoint := getBackupMountPoint(s.pool.Name, backup.Name())
 	logger.Debugf("Taring up \"%s\" on storage pool \"%s\"", backupMntPoint, s.pool.Name)
 
-	var buffer bytes.Buffer
-
-	args := []string{"-cJf", "-", "-C", backupMntPoint}
+	args := []string{"-cJf", "-", "-C", backupMntPoint, "--transform", "s,^./,backup/,"}
 	if backup.ContainerOnly() {
 		// Exclude snapshots directory
 		args = append(args, "--exclude", fmt.Sprintf("%s/snapshots", backup.Name()))
 	}
-	args = append(args, backup.Name())
+	args = append(args, ".")
 
 	cmd := exec.Command("tar", args...)
-	logger.Debugf("Running \"%v\"", args)
+	var buffer bytes.Buffer
 	cmd.Stdout = &buffer
 	err := cmd.Run()
 	if err != nil {
@@ -1618,59 +1605,29 @@ func (s *storageBtrfs) ContainerBackupLoad(info backupInfo, data []byte) error {
 		return err
 	}
 
-	if len(info.Snapshots) > 0 {
-		snapshotsPath := fmt.Sprintf("%s/snapshots", unpackPath)
-		snapNames, err := ioutil.ReadDir(snapshotsPath)
+	for _, snapshotOnlyName := range info.Snapshots {
+		snapshotBackup := fmt.Sprintf("%s/snapshots/%s.bin", unpackPath, snapshotOnlyName)
+		feeder, err := os.Open(snapshotBackup)
+		if err != nil {
+			return err
+		}
+		defer feeder.Close()
+
+		// /var/lib/lxd/storage-pools/<pool>/snapshots/<container>/
+		btrfsRecvCmd := exec.Command("btrfs", "receive", "-e", snapshotBackup)
+		btrfsRecvCmd.Stdin = feeder
+		err = btrfsRecvCmd.Run()
 		if err != nil {
 			return err
 		}
 
-		snapMap := make(map[int]string, len(snapNames))
-		mapKeys := make([]int, len(snapNames))
-		for i, s := range snapNames {
-			snapName := s.Name()
-			idx := strings.Index(snapName, "-")
-			if idx == -1 {
-				return err
-			}
-
-			mapIdx, err := strconv.Atoi(snapName[:idx])
-			if err != nil {
-				return err
-			}
-
-			mapKeys[i] = mapIdx
-			snapMap[mapIdx] = snapName[idx+1:]
-		}
-		sort.Ints(mapKeys)
-
-		snapshotDataset := getSnapshotMountPoint(s.pool.Name, "")
-		for _, key := range mapKeys {
-			snapshotOnlyName := snapMap[key]
-
-			snapshotBackup := fmt.Sprintf("%s/snapshots/%d-%s", unpackPath, key, snapshotOnlyName)
-			feeder, err := os.Open(snapshotBackup)
-			if err != nil {
-				return err
-			}
-			defer feeder.Close()
-
-			// /var/lib/lxd/storage-pools/<pool>/snapshots/<container>/
-			btrfsRecvCmd := exec.Command("btrfs", "receive", "-e", snapshotDataset)
-			btrfsRecvCmd.Stdin = feeder
-			err = btrfsRecvCmd.Run()
-			if err != nil {
-				return err
-			}
-
-			// create mountpoint
-			snapshotMntPoint := getSnapshotMountPoint(s.pool.Name, fmt.Sprintf("%s/%s", containerName, snapshotOnlyName))
-			snapshotMntPointSymlinkTarget := shared.VarPath("storage-pools", s.pool.Name, "snapshots", containerName)
-			snapshotMntPointSymlink := shared.VarPath("snapshots", containerName)
-			err = createSnapshotMountpoint(snapshotMntPoint, snapshotMntPointSymlinkTarget, snapshotMntPointSymlink)
-			if err != nil {
-				return err
-			}
+		// create mountpoint
+		snapshotMntPoint := getSnapshotMountPoint(s.pool.Name, fmt.Sprintf("%s/%s", containerName, snapshotOnlyName))
+		snapshotMntPointSymlinkTarget := shared.VarPath("storage-pools", s.pool.Name, "snapshots", containerName)
+		snapshotMntPointSymlink := shared.VarPath("snapshots", containerName)
+		err = createSnapshotMountpoint(snapshotMntPoint, snapshotMntPointSymlinkTarget, snapshotMntPointSymlink)
+		if err != nil {
+			return err
 		}
 	}
 
