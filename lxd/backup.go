@@ -4,17 +4,21 @@ import (
 	"archive/tar"
 	"bytes"
 	"io"
+	"os"
 	"os/exec"
 	"time"
 
 	yaml "gopkg.in/yaml.v2"
 
+	"github.com/lxc/lxd/lxd/db"
 	"github.com/lxc/lxd/lxd/state"
+	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/pkg/errors"
 )
 
 var ErrMissingIndexFile = errors.New("missing index.yaml")
+var ErrMissingBackupFile = errors.New("missing backup.yaml")
 
 // backup represents a container backup.
 type backup struct {
@@ -170,4 +174,103 @@ func getBackupInfo(r io.Reader) (*backupInfo, error) {
 	}
 
 	return nil, ErrMissingIndexFile
+}
+
+func getBackupStoragePool(s *state.State, r io.Reader) (storage, error) {
+	var buf bytes.Buffer
+	cmd := exec.Command("unxz", "-")
+	cmd.Stdin = r
+	cmd.Stdout = &buf
+	err := cmd.Run()
+	if err != nil {
+		return nil, err
+	}
+
+	tr := tar.NewReader(&buf)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break // End of archive
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		if hdr.Name == "backup/container/backup.yaml" {
+			backup := backupFile{}
+			err = yaml.NewDecoder(tr).Decode(&backup)
+			if err != nil {
+				return nil, err
+			}
+			return storagePoolInit(s, backup.Pool.Name)
+		}
+	}
+
+	return nil, ErrMissingBackupFile
+}
+
+// fixBackupStoragePool changes the pool information in the backup.yaml. This
+// is done only if the provided pool doesn't exist. In this case, the pool of
+// the default profile will be used.
+func fixBackupStoragePool(c *db.Cluster, b backupInfo) error {
+	// Get the default profile
+	_, profile, err := c.ProfileGet("default")
+	if err != nil {
+		return err
+	}
+
+	_, v, err := shared.GetRootDiskDevice(profile.Devices)
+	if err != nil {
+		return err
+	}
+
+	// Get the default's profile pool
+	_, pool, err := c.StoragePoolGet(v["pool"])
+	if err != nil {
+		return err
+	}
+
+	f := func(path string) error {
+		// Read in the backup.yaml file.
+		backup, err := slurpBackupFile(path)
+		if err != nil {
+			return err
+		}
+
+		// Change the pool in the backup.yaml
+		backup.Pool = pool
+		backup.Container.Devices["root"]["pool"] = "default"
+
+		file, err := os.Create(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		data, err := yaml.Marshal(&backup)
+		if err != nil {
+			return err
+		}
+
+		_, err = file.Write(data)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	err = f(shared.VarPath("storage-pools", pool.Name, "containers", b.Name, "backup.yaml"))
+	if err != nil {
+		return err
+	}
+
+	for _, snap := range b.Snapshots {
+		err = f(shared.VarPath("storage-pools", pool.Name, "snapshots", b.Name, snap,
+			"backup.yaml"))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

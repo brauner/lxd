@@ -550,7 +550,7 @@ func createFromBackup(d *Daemon, req *api.ContainersPost) Response {
 
 		body, err := json.Marshal(&internalImportPost{
 			Name:  bInfo.Name,
-			Force: false,
+			Force: true,
 		})
 		if err != nil {
 			return err

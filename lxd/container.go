@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -577,16 +578,50 @@ func containerCreateAsEmpty(d *Daemon, args db.ContainerArgs) (container, error)
 }
 
 func containerCreateFromBackup(s *state.State, info backupInfo, data []byte) error {
-	// Use default pool since the backup doesn't know any pools
-	st, err := storagePoolInit(s, "default")
+	var pool storage
+	var fixBackupFile = false
+
+	// Get storage pool from backup.yaml
+	pool, err := getBackupStoragePool(s, bytes.NewReader(data))
+	if err != nil {
+		// Pool doesn't exist (anymore) and we need to use the default pool
+		if err == db.ErrNoSuchObject {
+			// Get the default profile
+			_, profile, err := s.Cluster.ProfileGet("default")
+			if err != nil {
+				return err
+			}
+
+			_, v, err := shared.GetRootDiskDevice(profile.Devices)
+			if err != nil {
+				return err
+			}
+
+			// Use the default-profile's root pool
+			pool, err = storagePoolInit(s, v["pool"])
+			if err != nil {
+				return err
+			}
+
+			fixBackupFile = true
+		} else {
+			return err
+		}
+	}
+
+	// Unpack tarball
+	err = pool.ContainerBackupLoad(info, data)
 	if err != nil {
 		return err
 	}
 
-	// Unpack tarball
-	err = st.ContainerBackupLoad(info, data)
-	if err != nil {
-		return err
+	if fixBackupFile {
+		// Use the default pool since the pool provided in the backup.yaml
+		// doesn't exist.
+		err = fixBackupStoragePool(s.Cluster, info)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
