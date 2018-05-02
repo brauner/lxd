@@ -933,6 +933,7 @@ func createBackupIndexFile(container container, backup backup) error {
 		Name:       container.Name(),
 		Backend:    container.Storage().GetStorageTypeName(),
 		Privileged: container.IsPrivileged(),
+		Pool:       pool,
 		Snapshots:  []string{},
 	}
 
