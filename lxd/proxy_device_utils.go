@@ -31,10 +31,10 @@ func setupProxyProcInfo(c container, device map[string]string) (*proxyProcInfo, 
 	connectionType := strings.SplitN(connectAddr, ":", 2)[0]
 	listenerType := strings.SplitN(listenAddr, ":", 2)[0]
 
-	if connectionType != "tcp" {
+	if !shared.StringInSlice(connectionType, []string{"tcp", "unix"}) {
 		return nil, fmt.Errorf("Proxy device doesn't support the connection type: %s", connectionType)
 	}
-	if listenerType != "tcp" {
+	if !shared.StringInSlice(listenerType, []string{"tcp", "unix"}) {
 		return nil, fmt.Errorf("Proxy device doesn't support the listener type: %s", listenerType)
 	}
 
@@ -51,6 +51,17 @@ func setupProxyProcInfo(c container, device map[string]string) (*proxyProcInfo, 
 		connectPid = lxdPid
 	} else {
 		return nil, fmt.Errorf("Invalid binding side given. Must be \"host\" or \"container\".")
+	}
+
+	if connectionType == "unix" {
+		fields := strings.SplitN(connectAddr, ":", 2)
+		if len(fields) == 2 {
+			// Prefix provided connectAddr with the container rootfs path
+			addr := filepath.Join(c.Path(), "rootfs", fields[1])
+			connectAddr = fmt.Sprintf("%s:%s", connectionType, addr)
+		} else {
+			return nil, fmt.Errorf("Missing connection address")
+		}
 	}
 
 	p := &proxyProcInfo{

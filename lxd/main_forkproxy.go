@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
@@ -188,9 +189,6 @@ func (c *cmdForkproxy) Run(cmd *cobra.Command, args []string) error {
 		defer file.Close()
 
 		listenerFd := file.Fd()
-		if err != nil {
-			return fmt.Errorf("Failed to duplicate the listener fd: %v", err)
-		}
 
 		newFd, err := syscall.Dup(int(listenerFd))
 		if err != nil {
@@ -215,7 +213,30 @@ func (c *cmdForkproxy) Run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("Failed to re-assemble listener: %v", err)
 	}
 
-	defer listener.Close()
+	// Handl SIGTERM which is sent when the proxy is to be removed
+	terminate := false
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM)
+
+	// Wait for SIGTERM and close the listener in order to exit the loop below
+	go func() {
+		<-sigs
+		terminate = true
+		listener.Close()
+	}()
+
+	if strings.HasPrefix(connectAddr, "unix:") {
+		file, err := getListenerFile(connectAddr)
+		if err != nil {
+			return err
+		}
+
+		defer func() {
+			file.Close()
+			os.Remove(strings.TrimPrefix(listenAddr, "unix:"))
+			os.Remove(strings.TrimPrefix(connectAddr, "unix:"))
+		}()
+	}
 
 	fmt.Printf("Starting to proxy\n")
 
@@ -224,6 +245,10 @@ func (c *cmdForkproxy) Run(cmd *cobra.Command, args []string) error {
 		// Accept a new client
 		srcConn, err := listener.Accept()
 		if err != nil {
+			if terminate {
+				break
+			}
+
 			fmt.Printf("error: Failed to accept new connection: %v\n", err)
 			continue
 		}
@@ -240,6 +265,10 @@ func (c *cmdForkproxy) Run(cmd *cobra.Command, args []string) error {
 		go io.Copy(eagain.Writer{Writer: srcConn}, eagain.Reader{Reader: dstConn})
 		go io.Copy(eagain.Writer{Writer: dstConn}, eagain.Reader{Reader: srcConn})
 	}
+
+	fmt.Println("Stopping proxy")
+
+	return nil
 }
 
 func getListenerFile(listenAddr string) (os.File, error) {
@@ -248,7 +277,7 @@ func getListenerFile(listenAddr string) (os.File, error) {
 
 	listener, err := net.Listen(fields[0], addr)
 	if err != nil {
-		return os.File{}, err
+		return os.File{}, fmt.Errorf("Failed to listen on %s: %v", addr, err)
 	}
 
 	file := &os.File{}
