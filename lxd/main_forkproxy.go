@@ -219,7 +219,7 @@ func (c *cmdForkproxy) Run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("Failed to re-assemble listener: %v", err)
 	}
 
-	// Handl SIGTERM which is sent when the proxy is to be removed
+	// Handle SIGTERM which is sent when the proxy is to be removed
 	terminate := false
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM)
@@ -323,10 +323,10 @@ func getDestConn(connectAddr string) (net.Conn, error) {
 }
 
 func relay(src *net.UnixConn, dst *net.UnixConn) {
-	for {
-		dataBuf := make([]byte, 4096)
-		oobBuf := make([]byte, 4096)
+	dataBuf := make([]byte, 4096)
+	oobBuf := make([]byte, 4096)
 
+	for {
 		// Read from the source
 		sData, sOob, _, _, err := src.ReadMsgUnix(dataBuf, oobBuf)
 		if err != nil {
@@ -349,7 +349,7 @@ func relay(src *net.UnixConn, dst *net.UnixConn) {
 			for _, msg := range entries {
 				fds, err = syscall.ParseUnixRights(&msg)
 				if err != nil {
-					fmt.Printf("Failed to get fds list for control message: %v\n", err)
+					fmt.Printf("Failed to get fd list for control message: %v\n", err)
 					src.Close()
 					dst.Close()
 					return
