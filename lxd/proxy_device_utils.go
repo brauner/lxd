@@ -56,9 +56,12 @@ func setupProxyProcInfo(c container, device map[string]string) (*proxyProcInfo, 
 	if connectionType == "unix" {
 		fields := strings.SplitN(connectAddr, ":", 2)
 		if len(fields) == 2 {
-			// Prefix provided connectAddr with the container rootfs path
-			addr := filepath.Join(c.Path(), "rootfs", fields[1])
-			connectAddr = fmt.Sprintf("%s:%s", connectionType, addr)
+			// Prefix provided connectAddr with the container rootfs path if
+			// it's not an abstract socket
+			if !strings.HasPrefix(fields[1], "@") {
+				addr := filepath.Join(c.Path(), "rootfs", fields[1])
+				connectAddr = fmt.Sprintf("%s:%s", connectionType, addr)
+			}
 		} else {
 			return nil, fmt.Errorf("Missing connection address")
 		}

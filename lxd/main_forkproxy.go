@@ -129,6 +129,12 @@ type cmdForkproxy struct {
 	global *cmdGlobal
 }
 
+type proxyAddress struct {
+	connType string
+	addr     string
+	abstract bool
+}
+
 func (c *cmdForkproxy) Command() *cobra.Command {
 	// Main subcommand
 	cmd := &cobra.Command{}
@@ -225,7 +231,11 @@ func (c *cmdForkproxy) Run(cmd *cobra.Command, args []string) error {
 		listener.Close()
 	}()
 
-	if strings.HasPrefix(connectAddr, "unix:") {
+	cAddr := parseAddr(connectAddr)
+	lAddr := parseAddr(listenAddr)
+
+	if cAddr.connType == "unix" && !cAddr.abstract {
+		// Create socket
 		file, err := getListenerFile(connectAddr)
 		if err != nil {
 			return err
@@ -233,9 +243,12 @@ func (c *cmdForkproxy) Run(cmd *cobra.Command, args []string) error {
 
 		defer func() {
 			file.Close()
-			os.Remove(strings.TrimPrefix(listenAddr, "unix:"))
-			os.Remove(strings.TrimPrefix(connectAddr, "unix:"))
+			os.Remove(cAddr.addr)
 		}()
+	}
+
+	if lAddr.connType == "unix" && !lAddr.abstract {
+		defer os.Remove(lAddr.addr)
 	}
 
 	fmt.Printf("Starting to proxy\n")
@@ -262,8 +275,14 @@ func (c *cmdForkproxy) Run(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		go io.Copy(eagain.Writer{Writer: srcConn}, eagain.Reader{Reader: dstConn})
-		go io.Copy(eagain.Writer{Writer: dstConn}, eagain.Reader{Reader: srcConn})
+		if cAddr.connType == "unix" && lAddr.connType == "unix" {
+			// Handle OOB if both src and dst are using unix sockets
+			go relay(srcConn.(*net.UnixConn), dstConn.(*net.UnixConn))
+			go relay(dstConn.(*net.UnixConn), srcConn.(*net.UnixConn))
+		} else {
+			go io.Copy(eagain.Writer{Writer: srcConn}, eagain.Reader{Reader: dstConn})
+			go io.Copy(eagain.Writer{Writer: dstConn}, eagain.Reader{Reader: srcConn})
+		}
 	}
 
 	fmt.Println("Stopping proxy")
@@ -301,4 +320,79 @@ func getDestConn(connectAddr string) (net.Conn, error) {
 	fields := strings.SplitN(connectAddr, ":", 2)
 	addr := strings.Join(fields[1:], "")
 	return net.Dial(fields[0], addr)
+}
+
+func relay(src *net.UnixConn, dst *net.UnixConn) {
+	for {
+		dataBuf := make([]byte, 4096)
+		oobBuf := make([]byte, 4096)
+
+		// Read from the source
+		sData, sOob, _, _, err := src.ReadMsgUnix(dataBuf, oobBuf)
+		if err != nil {
+			fmt.Printf("Disconnected during read: %v\n", err)
+			src.Close()
+			dst.Close()
+			return
+		}
+
+		var fds []int
+		if sOob > 0 {
+			entries, err := syscall.ParseSocketControlMessage(oobBuf[:sOob])
+			if err != nil {
+				fmt.Printf("Failed to parse control message: %v\n", err)
+				src.Close()
+				dst.Close()
+				return
+			}
+
+			for _, msg := range entries {
+				fds, err = syscall.ParseUnixRights(&msg)
+				if err != nil {
+					fmt.Printf("Failed to get fds list for control message: %v\n", err)
+					src.Close()
+					dst.Close()
+					return
+				}
+			}
+		}
+
+		// Send to the destination
+		tData, tOob, err := dst.WriteMsgUnix(dataBuf[:sData], oobBuf[:sOob], nil)
+		if err != nil {
+			fmt.Printf("Disconnected during write: %v\n", err)
+			src.Close()
+			dst.Close()
+			return
+		}
+
+		if sData != tData || sOob != tOob {
+			fmt.Printf("Some data got lost during transfer, disconnecting.")
+			src.Close()
+			dst.Close()
+			return
+		}
+
+		// Close those fds we received
+		if fds != nil {
+			for _, fd := range fds {
+				err := syscall.Close(fd)
+				if err != nil {
+					fmt.Printf("Failed to close fd %d: %v\n", fd, err)
+					src.Close()
+					dst.Close()
+					return
+				}
+			}
+		}
+	}
+}
+
+func parseAddr(addr string) *proxyAddress {
+	fields := strings.SplitN(addr, ":", 2)
+	return &proxyAddress{
+		connType: fields[0],
+		addr:     fields[1],
+		abstract: strings.HasPrefix(fields[1], "@"),
+	}
 }
