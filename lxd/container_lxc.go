@@ -6791,8 +6791,12 @@ func (c *containerLXC) insertProxyDevice(devName string, m types.Device) error {
 	logFileName := fmt.Sprintf("proxy.%s.log", devName)
 	logPath := filepath.Join(c.LogPath(), logFileName)
 
-	_, err = shared.RunCommand(
-		c.state.OS.ExecPath,
+	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM|syscall.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command(c.state.OS.ExecPath,
 		"forkproxy",
 		proxyValues.listenPid,
 		proxyValues.listenAddr,
@@ -6802,6 +6806,33 @@ func (c *containerLXC) insertProxyDevice(devName string, m types.Device) error {
 		"0",
 		logPath,
 		pidPath)
+	cmd.ExtraFiles = []*os.File{os.NewFile(uintptr(fds[1]), "")}
+	err = cmd.Run()
+	syscall.Close(fds[1])
+	if err != nil {
+		syscall.Close(fds[0])
+		return fmt.Errorf("Error occurred when starting proxy device: %s", err)
+	}
+
+	listenerFile, err := shared.AbstractUnixReceiveFd(int(fds[0]))
+	syscall.Close(fds[0])
+	if err != nil {
+		return err
+	}
+	defer listenerFile.Fd()
+
+	cmd = exec.Command(c.state.OS.ExecPath,
+		"forkproxy",
+		proxyValues.listenPid,
+		proxyValues.listenAddr,
+		proxyValues.connectPid,
+		proxyValues.connectAddr,
+		"3",
+		"1",
+		logPath,
+		pidPath)
+	cmd.ExtraFiles = []*os.File{listenerFile}
+	err = cmd.Run()
 	if err != nil {
 		return fmt.Errorf("Error occurred when starting proxy device: %s", err)
 	}
