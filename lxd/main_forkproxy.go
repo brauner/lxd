@@ -23,11 +23,30 @@ import (
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 extern char* advance_arg(bool required);
 extern void attach_userns(int pid);
 extern int dosetns(int pid, char *nstype);
+
+int wait_for_pid(pid_t pid)
+{
+	int status, ret;
+
+again:
+	ret = waitpid(pid, &status, 0);
+	if (ret == -1) {
+		if (errno == EINTR)
+			goto again;
+		return -1;
+	}
+	if (ret != pid)
+		goto again;
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+		return -1;
+	return 0;
+}
 
 void forkproxy() {
 	int childPid, cmdline, connect_pid, fdnum, append, listen_pid, logfd, ret;
@@ -77,36 +96,50 @@ void forkproxy() {
 	}
 	fclose(logFile);
 
-	pidFile = fopen(pidPath, "w+");
-	if (pidFile == NULL) {
-		fprintf(stderr, "Failed to create pid file for proxy daemon: %s\n", strerror(errno));
-		_exit(EXIT_FAILURE);
-	}
-
-	childPid = fork();
-	if (childPid < 0) {
-		fprintf(stderr, "Failed to fork proxy daemon: %s\n", strerror(errno));
-		_exit(EXIT_FAILURE);
-	}
-
-	if (childPid != 0) {
-		fprintf(pidFile, "%d", childPid);
-		fclose(pidFile);
-		fclose(stdin);
-		fclose(stdout);
-		fclose(stderr);
-		_exit(EXIT_SUCCESS);
-	}
-
-	ret = setsid();
-	if (ret < 0) {
-		fprintf(stderr, "Failed to setsid in proxy daemon: %s\n", strerror(errno));
-		_exit(EXIT_FAILURE);
-	}
-
 	// Cannot pass through -1 to runCommand since it is interpreted as a flag
 	if (fdnum == 0)
 		fdnum = -1;
+
+	if (fdnum > 0) {
+		pid_t pid;
+
+		pid = fork();
+		if (pid < 0)
+			_exit(EXIT_FAILURE);
+
+		if (pid != 0) {
+			ret = wait_for_pid(pid);
+			if (ret < 0)
+				_exit(EXIT_FAILURE);
+
+			_exit(EXIT_SUCCESS);
+		}
+
+		pid = fork();
+		if (pid < 0)
+			_exit(EXIT_FAILURE);
+
+		if (pid != 0) {
+			pidFile = fopen(pidPath, "w+");
+			if (pidFile == NULL) {
+				fprintf(stderr, "Failed to create pid file for proxy daemon: %s\n", strerror(errno));
+				_exit(EXIT_FAILURE);
+			}
+
+			(void)fprintf(pidFile, "%d", pid);
+			fclose(pidFile);
+			close(STDIN_FILENO);
+			close(STDOUT_FILENO);
+			close(STDERR_FILENO);
+			_exit(EXIT_SUCCESS);
+		}
+
+		ret = setsid();
+		if (ret < 0) {
+			fprintf(stderr, "Failed to setsid in proxy daemon: %s\n", strerror(errno));
+			_exit(EXIT_FAILURE);
+		}
+	}
 
 	ret = snprintf(fdpath, sizeof(fdpath), "/proc/self/fd/%d", fdnum);
 	if (ret < 0 || (size_t)ret >= sizeof(fdpath)) {
