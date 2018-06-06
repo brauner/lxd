@@ -50,7 +50,7 @@ again:
 
 void forkproxy() {
 	int childPid, cmdline, connect_pid, fdnum, append, listen_pid, logfd, ret;
-	char *cur = NULL, *logPath = NULL, *pidPath = NULL, *listen_addr = NULL;
+	char *connect_addr = NULL, *cur = NULL, *logPath = NULL, *pidPath = NULL, *listen_addr = NULL;
 	FILE *logFile = NULL, *pidFile = NULL;
 
 	// /proc/self/fd/<num> (14 (path) + 21 (int64) + 1 (null))
@@ -60,12 +60,11 @@ void forkproxy() {
 	cur = advance_arg(false);
 	if (cur == NULL || (strcmp(cur, "--help") == 0 || strcmp(cur, "--version") == 0 || strcmp(cur, "-h") == 0))
 		return;
-	listen_pid = atoi(cur);
 
-	// Get the arguments
+	listen_pid = atoi(cur);
 	listen_addr = advance_arg(true);
 	connect_pid = atoi(advance_arg(true));
-	advance_arg(true);
+	connect_addr = advance_arg(true);
 	fdnum = atoi(advance_arg(true));
 	append = atoi(advance_arg(true));
 	logPath = advance_arg(true);
@@ -165,6 +164,13 @@ void forkproxy() {
 			fprintf(stderr, "Failed setns to listener mount namespace: %s\n", strerror(errno));
 			_exit(EXIT_FAILURE);
 		}
+
+		if (strncmp(listen_addr, "unix:", sizeof("unix:") - 1) == 0) {
+			cur = listen_addr + sizeof("unix:") - 1;
+			if (*cur != '@')
+				if (unlink(cur) < 0 && errno != ENOENT)
+					fprintf(stderr, "%s - Failed to remove old listening socket \"%s\"", strerror(errno), cur);
+		}
 	} else {
 		// Attach to the user namespace of the listener
 		attach_userns(connect_pid);
@@ -181,6 +187,13 @@ void forkproxy() {
 		if (ret < 0) {
 			fprintf(stderr, "Failed setns to listener mount namespace: %s\n", strerror(errno));
 			_exit(EXIT_FAILURE);
+		}
+
+		if (strncmp(connect_addr, "unix:", sizeof("unix:") - 1) == 0) {
+			cur = connect_addr + sizeof("unix:") - 1;
+			if (*cur != '@')
+				if (unlink(cur) < 0 && errno != ENOENT)
+					fprintf(stderr, "%s - Failed to remove old connection socket \"%s\"", strerror(errno), cur);
 		}
 	}
 }
