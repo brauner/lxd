@@ -3283,6 +3283,23 @@ func (c *containerLXC) Delete() error {
 	// Attempt to initialize storage interface for the container.
 	c.initStorage()
 
+	err := c.c.ClearConfigItem("lxc.rootfs.path")
+	if err != nil {
+		return err
+	}
+
+	// API calls that expect to operate on existing container will call an
+	// appropriate check that checks whether there's a config file under
+	// the path that the container resides in. Since we delete the
+	// container anyway it's safe to simply write it out.
+	err = c.c.SaveConfigFile(c.state.OS.LxcPath)
+	if err == nil {
+		err := c.c.Destroy()
+		if err != nil {
+			return err
+		}
+	}
+
 	if c.IsSnapshot() {
 		// Remove the snapshot
 		if c.storage != nil {
