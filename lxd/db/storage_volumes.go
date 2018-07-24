@@ -8,6 +8,19 @@ import (
 	"github.com/lxc/lxd/lxd/db/query"
 )
 
+// StorageVolumeType encodes the type of storage volume (either regular or snapshot).
+type StorageVolumeKind int
+
+// Numerical codes for storage volume types.
+const (
+	// storageVolumeKindDBInternal is only used internally to indicate that
+	// all storage volumes are to be retrieved irrespective of their kind.
+	storageVolumeKindDBInternal StorageVolumeKind = -1
+	StorageVolumeKindValid      StorageVolumeKind = 0
+	StorageVolumeKindRegular    StorageVolumeKind = 0
+	StorageVolumeKindSnapshot   StorageVolumeKind = 1
+)
+
 // StorageVolumeNodeAddresses returns the addresses of all nodes on which the
 // volume with the given name if defined.
 //
