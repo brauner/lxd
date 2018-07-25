@@ -7,6 +7,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"github.com/lxc/lxd/lxd/db"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 )
@@ -97,8 +98,22 @@ func storagePoolVolumeSnapshotsTypePost(d *Daemon, r *http.Request) Response {
 		defer storage.StoragePoolVolumeUmount()
 	}
 
-	// // Create new snapshot name.
-	// fullName := fmt.Sprintf("%s%s%s", name, shared.SnapshotDelimiter, req.Name)
+	volWritable := storage.GetStoragePoolVolumeWritable()
+	fullSnapName := fmt.Sprintf("%s%s%s", volumeName, shared.SnapshotDelimiter, req.Name)
+	req.Name = fullSnapName
+	dbArgs := &db.StorageVolumeArgs{
+		Name:        fullSnapName,
+		PoolName:    poolName,
+		TypeName:    volumeTypeName,
+		Kind:        db.StorageVolumeKindSnapshot,
+		Config:      volWritable.Config,
+		Description: volWritable.Description,
+	}
+
+	_, err = storagePoolVolumeSnapshotDBCreateInternal(d.State(), dbArgs)
+	if err != nil {
+		return SmartError(err)
+	}
 
 	return NotImplemented(fmt.Errorf("Creating storage pool volume snapshots is not implemented"))
 }
