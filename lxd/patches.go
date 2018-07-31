@@ -58,6 +58,7 @@ var patches = []patch{
 	{name: "storage_api_permissions", run: patchStorageApiPermissions},
 	{name: "container_config_regen", run: patchContainerConfigRegen},
 	{name: "lvm_node_specific_config_keys", run: patchLvmNodeSpecificConfigKeys},
+	{name: "storage_api_rename_container_snapshots_dir", run: patchStorageApiRenameContainerSnapshotsDir},
 }
 
 type patch struct {
@@ -2933,6 +2934,36 @@ func patchStorageApiPermissions(name string, d *Daemon) error {
 		}
 
 		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func patchStorageApiRenameContainerSnapshotsDir(name string, d *Daemon) error {
+	storagePoolsPath := shared.VarPath("storage-pools")
+	storagePoolsDir, err := os.Open(storagePoolsPath)
+	if err != nil {
+		return err
+	}
+
+	// Get a list of all storage pools.
+	storagePoolNames, err := storagePoolsDir.Readdirnames(-1)
+	storagePoolsDir.Close()
+	if err != nil {
+		return err
+	}
+
+	for _, poolName := range storagePoolNames {
+		containerSnapshotDirOld := shared.VarPath("storage-pools", poolName, "snapshots")
+		containerSnapshotDirNew := shared.VarPath("storage-pools", poolName, "containers-snapshots")
+		err := shared.FileMove(containerSnapshotDirOld, containerSnapshotDirNew)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+
 			return err
 		}
 	}
