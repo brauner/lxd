@@ -50,7 +50,7 @@ func (s *storageBtrfs) getContainerSubvolumePath(poolName string) string {
 
 // ${LXD_DIR}/storage-pools/<pool>/snapshots
 func getSnapshotSubvolumePath(poolName string, containerName string) string {
-	return shared.VarPath("storage-pools", poolName, "snapshots", containerName)
+	return shared.VarPath("storage-pools", poolName, "containers-snapshots", containerName)
 }
 
 // ${LXD_DIR}/storage-pools/<pool>/images
