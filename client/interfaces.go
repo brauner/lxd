@@ -103,7 +103,7 @@ type ContainerServer interface {
 	GetContainerSnapshots(containerName string) (snapshots []api.ContainerSnapshot, err error)
 	GetContainerSnapshot(containerName string, name string) (snapshot *api.ContainerSnapshot, ETag string, err error)
 	CreateContainerSnapshot(containerName string, snapshot api.ContainerSnapshotsPost) (op Operation, err error)
-	CopyContainerSnapshot(source ContainerServer, snapshot api.ContainerSnapshot, args *ContainerSnapshotCopyArgs) (op RemoteOperation, err error)
+	CopyContainerSnapshot(source ContainerServer, containerName string, snapshot api.ContainerSnapshot, args *ContainerSnapshotCopyArgs) (op RemoteOperation, err error)
 	RenameContainerSnapshot(containerName string, name string, container api.ContainerSnapshotPost) (op Operation, err error)
 	MigrateContainerSnapshot(containerName string, name string, container api.ContainerSnapshotPost) (op Operation, err error)
 	DeleteContainerSnapshot(containerName string, name string) (op Operation, err error)
@@ -196,6 +196,10 @@ type ContainerServer interface {
 	CopyStoragePoolVolume(pool string, source ContainerServer, sourcePool string, volume api.StorageVolume, args *StoragePoolVolumeCopyArgs) (op RemoteOperation, err error)
 	MoveStoragePoolVolume(pool string, source ContainerServer, sourcePool string, volume api.StorageVolume, args *StoragePoolVolumeMoveArgs) (op RemoteOperation, err error)
 	MigrateStoragePoolVolume(pool string, volume api.StorageVolumePost) (op Operation, err error)
+
+	// Storage volume snapshot functions ("storage_api_volume_snapshots" API extension)
+	CreateStoragePoolVolumeSnapshot(pool string, volumeType string, volume string, snapshot api.StorageVolumeSnapshotsPost) (op Operation, err error)
+	DeleteStoragePoolVolumeSnapshot(pool string, volType string, name string, snapshotName string) (err error)
 
 	// Cluster functions ("cluster" API extensions)
 	GetCluster() (cluster *api.Cluster, ETag string, err error)

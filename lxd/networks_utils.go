@@ -934,7 +934,7 @@ func networkGetMacSlice(hwaddr string) []string {
 	return buf
 }
 
-func networkClearLease(s *state.State, network string, hwaddr string) error {
+func networkClearLease(s *state.State, name string, network string, hwaddr string) error {
 	leaseFile := shared.VarPath("networks", network, "dnsmasq.leases")
 
 	// Check that we are in fact running a dnsmasq for the network
@@ -966,6 +966,7 @@ func networkClearLease(s *state.State, network string, hwaddr string) error {
 		return err
 	}
 
+	knownMac := networkGetMacSlice(hwaddr)
 	for _, lease := range strings.Split(string(leases), "\n") {
 		if lease == "" {
 			continue
@@ -973,12 +974,16 @@ func networkClearLease(s *state.State, network string, hwaddr string) error {
 
 		fields := strings.Fields(lease)
 		if len(fields) > 2 {
-			leaseMac := networkGetMacSlice(fields[1])
-			leaseMacStr := strings.Join(leaseMac, ":")
-			knownMac := networkGetMacSlice(hwaddr)
-			knownMacStr := strings.Join(
-				knownMac[len(knownMac)-len(leaseMac):], ":")
-			if knownMacStr == leaseMacStr {
+			if strings.Contains(fields[1], ":") {
+				leaseMac := networkGetMacSlice(fields[1])
+				leaseMacStr := strings.Join(leaseMac, ":")
+
+				knownMacStr := strings.Join(knownMac[len(knownMac)-len(leaseMac):], ":")
+				if knownMacStr == leaseMacStr {
+					continue
+				}
+			} else if len(fields) > 3 && fields[3] == name {
+				// Mostly IPv6 leases which don't contain a MAC address...
 				continue
 			}
 		}
@@ -1026,6 +1031,7 @@ func networkGetState(netIf net.Interface) api.NetworkState {
 		Type:      netType,
 	}
 
+	// Get address information
 	addrs, err := netIf.Addrs()
 	if err == nil {
 		for _, addr := range addrs {
@@ -1066,17 +1072,48 @@ func networkGetState(netIf net.Interface) api.NetworkState {
 		}
 	}
 
-	network.Counters.BytesSent, _ = shared.ParseNumberFromFile(
-		fmt.Sprintf("/sys/class/net/%s/statistics/tx_bytes", netIf.Name))
+	// Get counters
+	content, err := ioutil.ReadFile("/proc/net/dev")
+	if err == nil {
+		for _, line := range strings.Split(string(content), "\n") {
+			fields := strings.Fields(line)
 
-	network.Counters.BytesReceived, _ = shared.ParseNumberFromFile(
-		fmt.Sprintf("/sys/class/net/%s/statistics/rx_bytes", netIf.Name))
+			if len(fields) != 17 {
+				continue
+			}
 
-	network.Counters.PacketsSent, _ = shared.ParseNumberFromFile(
-		fmt.Sprintf("/sys/class/net/%s/statistics/tx_packets", netIf.Name))
+			intName := strings.TrimSuffix(fields[0], ":")
+			if intName != netIf.Name {
+				continue
+			}
 
-	network.Counters.PacketsReceived, _ = shared.ParseNumberFromFile(
-		fmt.Sprintf("/sys/class/net/%s/statistics/rx_packets", netIf.Name))
+			rxBytes, err := strconv.ParseInt(fields[1], 10, 64)
+			if err != nil {
+				continue
+			}
+
+			rxPackets, err := strconv.ParseInt(fields[2], 10, 64)
+			if err != nil {
+				continue
+			}
+
+			txBytes, err := strconv.ParseInt(fields[9], 10, 64)
+			if err != nil {
+				continue
+			}
+
+			txPackets, err := strconv.ParseInt(fields[10], 10, 64)
+			if err != nil {
+				continue
+			}
+
+			network.Counters.BytesSent = txBytes
+			network.Counters.BytesReceived = rxBytes
+			network.Counters.PacketsSent = txPackets
+			network.Counters.PacketsReceived = rxPackets
+			break
+		}
+	}
 
 	return network
 }

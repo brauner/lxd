@@ -48,9 +48,9 @@ func (s *storageBtrfs) getContainerSubvolumePath(poolName string) string {
 	return shared.VarPath("storage-pools", poolName, "containers")
 }
 
-// ${LXD_DIR}/storage-pools/<pool>/snapshots
+// ${LXD_DIR}/storage-pools/<pool>/containers-snapshots
 func getSnapshotSubvolumePath(poolName string, containerName string) string {
-	return shared.VarPath("storage-pools", poolName, "snapshots", containerName)
+	return shared.VarPath("storage-pools", poolName, "containers-snapshots", containerName)
 }
 
 // ${LXD_DIR}/storage-pools/<pool>/images
@@ -61,6 +61,11 @@ func (s *storageBtrfs) getImageSubvolumePath(poolName string) string {
 // ${LXD_DIR}/storage-pools/<pool>/custom
 func (s *storageBtrfs) getCustomSubvolumePath(poolName string) string {
 	return shared.VarPath("storage-pools", poolName, "custom")
+}
+
+// ${LXD_DIR}/storage-pools/<pool>/custom-snapshots
+func (s *storageBtrfs) getCustomSnapshotSubvolumePath(poolName string) string {
+	return shared.VarPath("storage-pools", poolName, "custom-snapshots")
 }
 
 func (s *storageBtrfs) StorageCoreInit() error {
@@ -250,6 +255,12 @@ func (s *storageBtrfs) StoragePoolCreate() error {
 	}
 
 	dummyDir = getStoragePoolVolumeMountPoint(s.pool.Name, "")
+	err = btrfsSubVolumeCreate(dummyDir)
+	if err != nil {
+		return fmt.Errorf("Could not create btrfs subvolume: %s", dummyDir)
+	}
+
+	dummyDir = getStoragePoolVolumeSnapshotMountPoint(s.pool.Name, "")
 	err = btrfsSubVolumeCreate(dummyDir)
 	if err != nil {
 		return fmt.Errorf("Could not create btrfs subvolume: %s", dummyDir)
@@ -1757,7 +1768,7 @@ func (s *storageBtrfs) ContainerBackupDump(backup backup) ([]byte, error) {
 	backupMntPoint := getBackupMountPoint(s.pool.Name, backup.Name())
 	logger.Debugf("Taring up \"%s\" on storage pool \"%s\"", backupMntPoint, s.pool.Name)
 
-	args := []string{"-cJf", "-", "-C", backupMntPoint, "--transform", "s,^./,backup/,"}
+	args := []string{"-cJf", "-", "--xattrs", "-C", backupMntPoint, "--transform", "s,^./,backup/,"}
 	if backup.ContainerOnly() {
 		// Exclude snapshots directory
 		args = append(args, "--exclude", fmt.Sprintf("%s/snapshots", backup.Name()))
@@ -1880,7 +1891,7 @@ func (s *storageBtrfs) doContainerBackupLoadVanilla(info backupInfo, data io.Rea
 		cur := fmt.Sprintf("backup/snapshots/%s", snap)
 		data.Seek(0, 0)
 		err = shared.RunCommandWithFds(data, nil, "tar", "-xJf", "-",
-			"--recursive-unlink", "--strip-components=3", "-C", containerMntPoint, cur)
+			"--recursive-unlink", "--xattrs-include=*", "--strip-components=3", "-C", containerMntPoint, cur)
 		if err != nil {
 			logger.Errorf("Failed to untar \"%s\" into \"%s\": %s", cur, containerMntPoint, err)
 			return err
@@ -1896,7 +1907,7 @@ func (s *storageBtrfs) doContainerBackupLoadVanilla(info backupInfo, data io.Rea
 	// Extract container
 	data.Seek(0, 0)
 	err = shared.RunCommandWithFds(data, nil, "tar", "-xJf", "-",
-		"--strip-components=2", "-C", containerMntPoint, "backup/container")
+		"--strip-components=2", "--xattrs-include=*", "-C", containerMntPoint, "backup/container")
 	if err != nil {
 		logger.Errorf("Failed to untar \"backup/container\" into \"%s\": %s", containerMntPoint, err)
 		return err
@@ -2928,4 +2939,42 @@ func (s *storageBtrfs) GetStoragePoolVolume() *api.StorageVolume {
 
 func (s *storageBtrfs) GetState() *state.State {
 	return s.s
+}
+
+func (s *storageBtrfs) StoragePoolVolumeSnapshotCreate(target *api.StorageVolumeSnapshotsPost) error {
+	logger.Infof("Creating BTRFS storage volume snapshot \"%s\" on storage pool \"%s\"", s.volume.Name, s.pool.Name)
+
+	// Create subvolume path on the storage pool.
+	customSubvolumePath := s.getCustomSubvolumePath(s.pool.Name)
+	err := os.MkdirAll(customSubvolumePath, 0700)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	_, _, ok := containerGetParentAndSnapshotName(target.Name)
+	if !ok {
+		return err
+	}
+
+	customSnapshotSubvolumeName := getStoragePoolVolumeSnapshotMountPoint(s.pool.Name, s.volume.Name)
+	err = os.MkdirAll(customSnapshotSubvolumeName, snapshotsDirMode)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	sourcePath := getStoragePoolVolumeMountPoint(s.pool.Name, s.volume.Name)
+	targetPath := getStoragePoolVolumeSnapshotMountPoint(s.pool.Name, target.Name)
+	err = s.btrfsPoolVolumesSnapshot(sourcePath, targetPath, true, true)
+	if err != nil {
+		return err
+	}
+
+	logger.Infof("Created BTRFS storage volume snapshot \"%s\" on storage pool \"%s\"", s.volume.Name, s.pool.Name)
+	return nil
+}
+
+func (s *storageBtrfs) StoragePoolVolumeSnapshotDelete() error {
+	msg := fmt.Sprintf("Function not implemented")
+	logger.Errorf(msg)
+	return fmt.Errorf(msg)
 }

@@ -762,7 +762,7 @@ func (r *ProtocolLXD) GetContainerFile(containerName string, path string) (io.Re
 
 	// Check the return value for a cleaner error
 	if resp.StatusCode != http.StatusOK {
-		_, _, err := r.parseResponse(resp)
+		_, _, err := lxdParseResponse(resp)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -861,7 +861,7 @@ func (r *ProtocolLXD) CreateContainerFile(containerName string, path string, arg
 	}
 
 	// Check the return value for a cleaner error
-	_, _, err = r.parseResponse(resp)
+	_, _, err = lxdParseResponse(resp)
 	if err != nil {
 		return err
 	}
@@ -942,12 +942,13 @@ func (r *ProtocolLXD) CreateContainerSnapshot(containerName string, snapshot api
 }
 
 // CopyContainerSnapshot copies a snapshot from a remote server into a new container. Additional options can be passed using ContainerCopyArgs
-func (r *ProtocolLXD) CopyContainerSnapshot(source ContainerServer, snapshot api.ContainerSnapshot, args *ContainerSnapshotCopyArgs) (RemoteOperation, error) {
-	// Base request
-	fields := strings.SplitN(snapshot.Name, shared.SnapshotDelimiter, 2)
-	cName := fields[0]
-	sName := fields[1]
+func (r *ProtocolLXD) CopyContainerSnapshot(source ContainerServer, containerName string, snapshot api.ContainerSnapshot, args *ContainerSnapshotCopyArgs) (RemoteOperation, error) {
+	// Backward compatibility (with broken Name field)
+	fields := strings.Split(snapshot.Name, shared.SnapshotDelimiter)
+	cName := containerName
+	sName := fields[len(fields)-1]
 
+	// Base request
 	req := api.ContainersPost{
 		Name: cName,
 		ContainerPut: api.ContainerPut{
@@ -995,7 +996,7 @@ func (r *ProtocolLXD) CopyContainerSnapshot(source ContainerServer, snapshot api
 	if r == source && r.clusterTarget == "" {
 		// Local copy source fields
 		req.Source.Type = "copy"
-		req.Source.Source = snapshot.Name
+		req.Source.Source = fmt.Sprintf("%s/%s", cName, sName)
 
 		// Copy the container
 		op, err := r.CreateContainer(req)
@@ -1287,7 +1288,7 @@ func (r *ProtocolLXD) GetContainerLogfile(name string, filename string) (io.Read
 
 	// Check the return value for a cleaner error
 	if resp.StatusCode != http.StatusOK {
-		_, _, err := r.parseResponse(resp)
+		_, _, err := lxdParseResponse(resp)
 		if err != nil {
 			return nil, err
 		}
@@ -1381,7 +1382,7 @@ func (r *ProtocolLXD) GetContainerTemplateFile(containerName string, templateNam
 
 	// Check the return value for a cleaner error
 	if resp.StatusCode != http.StatusOK {
-		_, _, err := r.parseResponse(resp)
+		_, _, err := lxdParseResponse(resp)
 		if err != nil {
 			return nil, err
 		}
@@ -1421,7 +1422,7 @@ func (r *ProtocolLXD) setContainerTemplateFile(containerName string, templateNam
 	resp, err := r.http.Do(req)
 	// Check the return value for a cleaner error
 	if resp.StatusCode != http.StatusOK {
-		_, _, err := r.parseResponse(resp)
+		_, _, err := lxdParseResponse(resp)
 		if err != nil {
 			return err
 		}
@@ -1536,7 +1537,7 @@ func (r *ProtocolLXD) GetContainerConsoleLog(containerName string, args *Contain
 
 	// Check the return value for a cleaner error
 	if resp.StatusCode != http.StatusOK {
-		_, _, err := r.parseResponse(resp)
+		_, _, err := lxdParseResponse(resp)
 		if err != nil {
 			return nil, err
 		}
@@ -1695,7 +1696,7 @@ func (r *ProtocolLXD) GetContainerBackupFile(containerName string, name string, 
 	defer close(doneCh)
 
 	if response.StatusCode != http.StatusOK {
-		_, _, err := r.parseResponse(response)
+		_, _, err := lxdParseResponse(response)
 		if err != nil {
 			return nil, err
 		}

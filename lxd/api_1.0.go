@@ -72,6 +72,8 @@ var api10 = []Command{
 	storagePoolVolumesCmd,
 	storagePoolVolumesTypeCmd,
 	storagePoolVolumeTypeCmd,
+	storagePoolVolumeSnapshotsTypeCmd,
+	storagePoolVolumeSnapshotTypeCmd,
 	serverResourceCmd,
 	clusterCmd,
 	clusterNodesCmd,

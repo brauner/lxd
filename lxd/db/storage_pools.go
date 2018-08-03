@@ -657,7 +657,7 @@ func (c *Cluster) StoragePoolDelete(poolName string) (*api.StoragePool, error) {
 
 // StoragePoolVolumesGetNames gets the names of all storage volumes attached to
 // a given storage pool.
-func (c *Cluster) StoragePoolVolumesGetNames(poolID int64) (int, error) {
+func (c *Cluster) StoragePoolVolumesGetNames(poolID int64) ([]string, error) {
 	var volumeName string
 	query := "SELECT name FROM storage_volumes WHERE storage_pool_id=? AND node_id=?"
 	inargs := []interface{}{poolID, c.nodeID}
@@ -665,14 +665,16 @@ func (c *Cluster) StoragePoolVolumesGetNames(poolID int64) (int, error) {
 
 	result, err := queryScan(c.db, query, inargs, outargs)
 	if err != nil {
-		return -1, err
+		return []string{}, err
 	}
 
-	if len(result) == 0 {
-		return 0, nil
+	var out []string
+
+	for _, r := range result {
+		out = append(out, r[0].(string))
 	}
 
-	return len(result), nil
+	return out, nil
 }
 
 // StoragePoolVolumesGet returns all storage volumes attached to a given
@@ -903,8 +905,13 @@ func storagePoolVolumeReplicateIfCeph(tx *sql.Tx, volumeID int64, volumeName str
 
 // StoragePoolVolumeCreate creates a new storage volume attached to a given
 // storage pool.
-func (c *Cluster) StoragePoolVolumeCreate(volumeName, volumeDescription string, volumeType int, poolID int64, volumeConfig map[string]string) (int64, error) {
+func (c *Cluster) StoragePoolVolumeCreate(volumeName, volumeDescription string, volumeType int, volumeKind StorageVolumeKind, poolID int64, volumeConfig map[string]string) (int64, error) {
 	var thisVolumeID int64
+
+	if volumeKind < StorageVolumeKindValid {
+		return -1, fmt.Errorf("Invalid storage volume kind %d specified", volumeKind)
+	}
+
 	err := c.Transaction(func(tx *ClusterTx) error {
 		nodeIDs := []int{int(c.nodeID)}
 		driver, err := storagePoolDriverGet(tx.tx, poolID)
@@ -921,9 +928,9 @@ func (c *Cluster) StoragePoolVolumeCreate(volumeName, volumeDescription string, 
 
 		for _, nodeID := range nodeIDs {
 			result, err := tx.tx.Exec(`
-INSERT INTO storage_volumes (storage_pool_id, node_id, type, name, description) VALUES (?, ?, ?, ?, ?)
+INSERT INTO storage_volumes (storage_pool_id, node_id, type, kind, name, description) VALUES (?, ?, ?, ?, ?, ?)
 `,
-				poolID, nodeID, volumeType, volumeName, volumeDescription)
+				poolID, nodeID, volumeType, volumeKind, volumeName, volumeDescription)
 			if err != nil {
 				return err
 			}
@@ -1006,6 +1013,8 @@ var StoragePoolNodeConfigKeys = []string{
 	"source",
 	"volatile.initial_source",
 	"zfs.pool_name",
+	"lvm.thinpool",
+	"lvm.vg_name",
 }
 
 // StoragePoolVolumeTypeToName converts a volume integer type code to its

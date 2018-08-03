@@ -10,8 +10,10 @@ import (
 
 	"github.com/lxc/lxd/lxd/cluster"
 	"github.com/lxc/lxd/lxd/db"
+	"github.com/lxc/lxd/lxd/db/query"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/logger"
+	"github.com/pkg/errors"
 
 	log "github.com/lxc/lxd/shared/log15"
 )
@@ -55,6 +57,8 @@ var patches = []patch{
 	{name: "devices_new_naming_scheme", run: patchDevicesNewNamingScheme},
 	{name: "storage_api_permissions", run: patchStorageApiPermissions},
 	{name: "container_config_regen", run: patchContainerConfigRegen},
+	{name: "lvm_node_specific_config_keys", run: patchLvmNodeSpecificConfigKeys},
+	{name: "storage_api_rename_container_snapshots_dir", run: patchStorageApiRenameContainerSnapshotsDir},
 }
 
 type patch struct {
@@ -262,7 +266,7 @@ func patchStorageApi(name string, d *Daemon) error {
 		}
 		err = upgradeFromStorageTypeZfs(name, d, defaultPoolName, defaultStorageTypeName, cRegular, []string{}, imgPublic, imgPrivate)
 	default: // Shouldn't happen.
-		return fmt.Errorf("Invalid storage type. Upgrading not possible.")
+		return fmt.Errorf("Invalid storage type. Upgrading not possible")
 	}
 	if err != nil {
 		return err
@@ -403,7 +407,7 @@ func upgradeFromStorageTypeBtrfs(name string, d *Daemon, defaultPoolName string,
 			}
 		} else if err == db.ErrNoSuchObject {
 			// Insert storage volumes for containers into the database.
-			_, err := d.cluster.StoragePoolVolumeCreate(ct, "", storagePoolVolumeTypeContainer, poolID, containerPoolVolumeConfig)
+			_, err := d.cluster.StoragePoolVolumeCreate(ct, "", storagePoolVolumeTypeContainer, db.StorageVolumeKindRegular, poolID, containerPoolVolumeConfig)
 			if err != nil {
 				logger.Errorf("Could not insert a storage volume for container \"%s\"", ct)
 				return err
@@ -491,7 +495,7 @@ func upgradeFromStorageTypeBtrfs(name string, d *Daemon, defaultPoolName string,
 				}
 			} else if err == db.ErrNoSuchObject {
 				// Insert storage volumes for containers into the database.
-				_, err := d.cluster.StoragePoolVolumeCreate(cs, "", storagePoolVolumeTypeContainer, poolID, snapshotPoolVolumeConfig)
+				_, err := d.cluster.StoragePoolVolumeCreate(cs, "", storagePoolVolumeTypeContainer, db.StorageVolumeKindRegular, poolID, snapshotPoolVolumeConfig)
 				if err != nil {
 					logger.Errorf("Could not insert a storage volume for snapshot \"%s\"", cs)
 					return err
@@ -572,7 +576,7 @@ func upgradeFromStorageTypeBtrfs(name string, d *Daemon, defaultPoolName string,
 			}
 		} else if err == db.ErrNoSuchObject {
 			// Insert storage volumes for containers into the database.
-			_, err := d.cluster.StoragePoolVolumeCreate(img, "", storagePoolVolumeTypeImage, poolID, imagePoolVolumeConfig)
+			_, err := d.cluster.StoragePoolVolumeCreate(img, "", storagePoolVolumeTypeImage, db.StorageVolumeKindRegular, poolID, imagePoolVolumeConfig)
 			if err != nil {
 				logger.Errorf("Could not insert a storage volume for image \"%s\"", img)
 				return err
@@ -690,7 +694,7 @@ func upgradeFromStorageTypeDir(name string, d *Daemon, defaultPoolName string, d
 			}
 		} else if err == db.ErrNoSuchObject {
 			// Insert storage volumes for containers into the database.
-			_, err := d.cluster.StoragePoolVolumeCreate(ct, "", storagePoolVolumeTypeContainer, poolID, containerPoolVolumeConfig)
+			_, err := d.cluster.StoragePoolVolumeCreate(ct, "", storagePoolVolumeTypeContainer, db.StorageVolumeKindRegular, poolID, containerPoolVolumeConfig)
 			if err != nil {
 				logger.Errorf("Could not insert a storage volume for container \"%s\"", ct)
 				return err
@@ -807,7 +811,7 @@ func upgradeFromStorageTypeDir(name string, d *Daemon, defaultPoolName string, d
 			}
 		} else if err == db.ErrNoSuchObject {
 			// Insert storage volumes for containers into the database.
-			_, err := d.cluster.StoragePoolVolumeCreate(cs, "", storagePoolVolumeTypeContainer, poolID, snapshotPoolVolumeConfig)
+			_, err := d.cluster.StoragePoolVolumeCreate(cs, "", storagePoolVolumeTypeContainer, db.StorageVolumeKindRegular, poolID, snapshotPoolVolumeConfig)
 			if err != nil {
 				logger.Errorf("Could not insert a storage volume for snapshot \"%s\"", cs)
 				return err
@@ -837,7 +841,7 @@ func upgradeFromStorageTypeDir(name string, d *Daemon, defaultPoolName string, d
 			}
 		} else if err == db.ErrNoSuchObject {
 			// Insert storage volumes for containers into the database.
-			_, err := d.cluster.StoragePoolVolumeCreate(img, "", storagePoolVolumeTypeImage, poolID, imagePoolVolumeConfig)
+			_, err := d.cluster.StoragePoolVolumeCreate(img, "", storagePoolVolumeTypeImage, db.StorageVolumeKindRegular, poolID, imagePoolVolumeConfig)
 			if err != nil {
 				logger.Errorf("Could not insert a storage volume for image \"%s\"", img)
 				return err
@@ -999,7 +1003,7 @@ func upgradeFromStorageTypeLvm(name string, d *Daemon, defaultPoolName string, d
 			}
 		} else if err == db.ErrNoSuchObject {
 			// Insert storage volumes for containers into the database.
-			_, err := d.cluster.StoragePoolVolumeCreate(ct, "", storagePoolVolumeTypeContainer, poolID, containerPoolVolumeConfig)
+			_, err := d.cluster.StoragePoolVolumeCreate(ct, "", storagePoolVolumeTypeContainer, db.StorageVolumeKindRegular, poolID, containerPoolVolumeConfig)
 			if err != nil {
 				logger.Errorf("Could not insert a storage volume for container \"%s\"", ct)
 				return err
@@ -1154,7 +1158,7 @@ func upgradeFromStorageTypeLvm(name string, d *Daemon, defaultPoolName string, d
 				}
 			} else if err == db.ErrNoSuchObject {
 				// Insert storage volumes for containers into the database.
-				_, err := d.cluster.StoragePoolVolumeCreate(cs, "", storagePoolVolumeTypeContainer, poolID, snapshotPoolVolumeConfig)
+				_, err := d.cluster.StoragePoolVolumeCreate(cs, "", storagePoolVolumeTypeContainer, db.StorageVolumeKindRegular, poolID, snapshotPoolVolumeConfig)
 				if err != nil {
 					logger.Errorf("Could not insert a storage volume for snapshot \"%s\"", cs)
 					return err
@@ -1325,7 +1329,7 @@ func upgradeFromStorageTypeLvm(name string, d *Daemon, defaultPoolName string, d
 			}
 		} else if err == db.ErrNoSuchObject {
 			// Insert storage volumes for containers into the database.
-			_, err := d.cluster.StoragePoolVolumeCreate(img, "", storagePoolVolumeTypeImage, poolID, imagePoolVolumeConfig)
+			_, err := d.cluster.StoragePoolVolumeCreate(img, "", storagePoolVolumeTypeImage, db.StorageVolumeKindRegular, poolID, imagePoolVolumeConfig)
 			if err != nil {
 				logger.Errorf("Could not insert a storage volume for image \"%s\"", img)
 				return err
@@ -1517,7 +1521,7 @@ func upgradeFromStorageTypeZfs(name string, d *Daemon, defaultPoolName string, d
 			}
 		} else if err == db.ErrNoSuchObject {
 			// Insert storage volumes for containers into the database.
-			_, err := d.cluster.StoragePoolVolumeCreate(ct, "", storagePoolVolumeTypeContainer, poolID, containerPoolVolumeConfig)
+			_, err := d.cluster.StoragePoolVolumeCreate(ct, "", storagePoolVolumeTypeContainer, db.StorageVolumeKindRegular, poolID, containerPoolVolumeConfig)
 			if err != nil {
 				logger.Errorf("Could not insert a storage volume for container \"%s\"", ct)
 				return err
@@ -1603,7 +1607,7 @@ func upgradeFromStorageTypeZfs(name string, d *Daemon, defaultPoolName string, d
 				}
 			} else if err == db.ErrNoSuchObject {
 				// Insert storage volumes for containers into the database.
-				_, err := d.cluster.StoragePoolVolumeCreate(cs, "", storagePoolVolumeTypeContainer, poolID, snapshotPoolVolumeConfig)
+				_, err := d.cluster.StoragePoolVolumeCreate(cs, "", storagePoolVolumeTypeContainer, db.StorageVolumeKindRegular, poolID, snapshotPoolVolumeConfig)
 				if err != nil {
 					logger.Errorf("Could not insert a storage volume for snapshot \"%s\"", cs)
 					return err
@@ -1659,7 +1663,7 @@ func upgradeFromStorageTypeZfs(name string, d *Daemon, defaultPoolName string, d
 			}
 		} else if err == db.ErrNoSuchObject {
 			// Insert storage volumes for containers into the database.
-			_, err := d.cluster.StoragePoolVolumeCreate(img, "", storagePoolVolumeTypeImage, poolID, imagePoolVolumeConfig)
+			_, err := d.cluster.StoragePoolVolumeCreate(img, "", storagePoolVolumeTypeImage, db.StorageVolumeKindRegular, poolID, imagePoolVolumeConfig)
 			if err != nil {
 				logger.Errorf("Could not insert a storage volume for image \"%s\"", img)
 				return err
@@ -1908,7 +1912,8 @@ func patchContainerConfigRegen(name string, d *Daemon) error {
 		// Load the container from the database.
 		c, err := containerLoadByName(d.State(), ct)
 		if err != nil {
-			return err
+			logger.Errorf("Failed to open container '%s': %v", ct, err)
+			continue
 		}
 
 		if !c.IsRunning() {
@@ -1922,7 +1927,8 @@ func patchContainerConfigRegen(name string, d *Daemon) error {
 
 		err = lxcCt.initLXC(true)
 		if err != nil {
-			return err
+			logger.Errorf("Failed to generate LXC config for '%s': %v", ct, err)
+			continue
 		}
 
 		// Generate the LXC config
@@ -1930,11 +1936,76 @@ func patchContainerConfigRegen(name string, d *Daemon) error {
 		err = lxcCt.c.SaveConfigFile(configPath)
 		if err != nil {
 			os.Remove(configPath)
-			return err
+			logger.Errorf("Failed to save LXC config for '%s': %v", ct, err)
+			continue
 		}
 	}
 
 	return nil
+}
+
+// The lvm.thinpool_name and lvm.vg_name config keys are node-specific and need
+// to be linked to nodes.
+func patchLvmNodeSpecificConfigKeys(name string, d *Daemon) error {
+	tx, err := d.cluster.Begin()
+	if err != nil {
+		return errors.Wrap(err, "failed to begin transaction")
+	}
+
+	// Fetch the IDs of all existing nodes.
+	nodeIDs, err := query.SelectIntegers(tx, "SELECT id FROM nodes")
+	if err != nil {
+		return errors.Wrap(err, "failed to get IDs of current nodes")
+	}
+
+	// Fetch the IDs of all existing lvm pools.
+	poolIDs, err := query.SelectIntegers(tx, "SELECT id FROM storage_pools WHERE driver='lvm'")
+	if err != nil {
+		return errors.Wrap(err, "failed to get IDs of current lvm pools")
+	}
+
+	for _, poolID := range poolIDs {
+		// Fetch the config for this lvm pool and check if it has the
+		// lvn.thinpool_name or lvm.vg_name keys.
+		config, err := query.SelectConfig(
+			tx, "storage_pools_config", "storage_pool_id=? AND node_id IS NULL", poolID)
+		if err != nil {
+			return errors.Wrap(err, "failed to fetch of lvm pool config")
+		}
+
+		for _, key := range []string{"lvm.thinpool_name", "lvm.vg_name"} {
+			value, ok := config[key]
+			if !ok {
+				continue
+			}
+
+			// Delete the current key
+			_, err = tx.Exec(`
+DELETE FROM storage_pools_config WHERE key=? AND storage_pool_id=? AND node_id IS NULL
+`, key, poolID)
+			if err != nil {
+				return errors.Wrapf(err, "failed to delete %s config", key)
+			}
+
+			// Add the config entry for each node
+			for _, nodeID := range nodeIDs {
+				_, err := tx.Exec(`
+INSERT INTO storage_pools_config(storage_pool_id, node_id, key, value)
+  VALUES(?, ?, ?, ?)
+`, poolID, nodeID, key, value)
+				if err != nil {
+					return errors.Wrapf(err, "failed to create %s node config", key)
+				}
+			}
+		}
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return errors.Wrap(err, "failed to commit transaction")
+	}
+
+	return err
 }
 
 func patchStorageApiDirCleanup(name string, d *Daemon) error {
@@ -2256,7 +2327,7 @@ func patchStorageApiDetectLVSize(name string, d *Daemon) error {
 		poolName := pool.Config["lvm.vg_name"]
 		if poolName == "" {
 			logger.Errorf("The \"lvm.vg_name\" key should not be empty")
-			return fmt.Errorf("The \"lvm.vg_name\" key should not be empty.")
+			return fmt.Errorf("The \"lvm.vg_name\" key should not be empty")
 		}
 
 		for _, volume := range volumes {
@@ -2870,6 +2941,36 @@ func patchStorageApiPermissions(name string, d *Daemon) error {
 	return nil
 }
 
+func patchStorageApiRenameContainerSnapshotsDir(name string, d *Daemon) error {
+	storagePoolsPath := shared.VarPath("storage-pools")
+	storagePoolsDir, err := os.Open(storagePoolsPath)
+	if err != nil {
+		return err
+	}
+
+	// Get a list of all storage pools.
+	storagePoolNames, err := storagePoolsDir.Readdirnames(-1)
+	storagePoolsDir.Close()
+	if err != nil {
+		return err
+	}
+
+	for _, poolName := range storagePoolNames {
+		containerSnapshotDirOld := shared.VarPath("storage-pools", poolName, "snapshots")
+		containerSnapshotDirNew := shared.VarPath("storage-pools", poolName, "containers-snapshots")
+		err := shared.FileMove(containerSnapshotDirOld, containerSnapshotDirNew)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+
+			return err
+		}
+	}
+
+	return nil
+}
+
 // Patches end here
 
 // Here are a couple of legacy patches that were originally in
@@ -2969,7 +3070,7 @@ func patchUpdateFromV11(d *Daemon) error {
 
 	// Refuse to start lxd if a rsync failed.
 	if errors > 0 {
-		return fmt.Errorf("Got errors while moving snapshots, see the log output.")
+		return fmt.Errorf("Got errors while moving snapshots, see the log output")
 	}
 
 	return nil

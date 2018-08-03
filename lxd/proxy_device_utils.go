@@ -23,6 +23,7 @@ type proxyProcInfo struct {
 	listenAddrMode string
 	securityUid    string
 	securityGid    string
+	proxyProtocol  string
 }
 
 func setupProxyProcInfo(c container, device map[string]string) (*proxyProcInfo, error) {
@@ -55,7 +56,7 @@ func setupProxyProcInfo(c container, device map[string]string) (*proxyProcInfo, 
 		listenPid = containerPid
 		connectPid = lxdPid
 	} else {
-		return nil, fmt.Errorf("Invalid binding side given. Must be \"host\" or \"container\".")
+		return nil, fmt.Errorf("Invalid binding side given. Must be \"host\" or \"container\"")
 	}
 
 	p := &proxyProcInfo{
@@ -68,6 +69,7 @@ func setupProxyProcInfo(c container, device map[string]string) (*proxyProcInfo, 
 		listenAddrMode: device["mode"],
 		securityGid:    device["security.gid"],
 		securityUid:    device["security.uid"],
+		proxyProtocol:  device["proxy_protocol"],
 	}
 
 	return p, nil

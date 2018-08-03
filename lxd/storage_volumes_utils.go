@@ -467,14 +467,7 @@ func profilesUsingPoolVolumeGetNames(db *db.Cluster, volumeName string, volumeTy
 	return usedBy, nil
 }
 
-func storagePoolVolumeDBCreate(s *state.State, poolName string, volumeName, volumeDescription string, volumeTypeName string, volumeConfig map[string]string) error {
-	// Check that the name of the new storage volume is valid. (For example.
-	// zfs pools cannot contain "/" in their names.)
-	err := storageValidName(volumeName)
-	if err != nil {
-		return err
-	}
-
+func storagePoolVolumeDBCreate(s *state.State, poolName string, volumeName, volumeDescription string, volumeTypeName string, volumeKind db.StorageVolumeKind, volumeConfig map[string]string) error {
 	// Convert the volume type name to our internal integer representation.
 	volumeType, err := storagePoolVolumeTypeNameToType(volumeTypeName)
 	if err != nil {
@@ -511,7 +504,7 @@ func storagePoolVolumeDBCreate(s *state.State, poolName string, volumeName, volu
 	}
 
 	// Create the database entry for the storage volume.
-	_, err = s.Cluster.StoragePoolVolumeCreate(volumeName, volumeDescription, volumeType, poolID, volumeConfig)
+	_, err = s.Cluster.StoragePoolVolumeCreate(volumeName, volumeDescription, volumeType, volumeKind, poolID, volumeConfig)
 	if err != nil {
 		return fmt.Errorf("Error inserting %s of type %s into database: %s", poolName, volumeTypeName, err)
 	}
@@ -544,7 +537,7 @@ func storagePoolVolumeDBCreateInternal(state *state.State, poolName string, vol 
 	}
 
 	// Create database entry for new storage volume.
-	err := storagePoolVolumeDBCreate(state, poolName, volumeName, volumeDescription, volumeTypeName, volumeConfig)
+	err := storagePoolVolumeDBCreate(state, poolName, volumeName, volumeDescription, volumeTypeName, db.StorageVolumeKindRegular, volumeConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -592,4 +585,33 @@ func storagePoolVolumeCreateInternal(state *state.State, poolName string, vol *a
 	}
 
 	return nil
+}
+
+func storagePoolVolumeSnapshotDBCreateInternal(state *state.State, dbArgs *db.StorageVolumeArgs) (storage, error) {
+	// Create database entry for new storage volume.
+	err := storagePoolVolumeDBCreate(state, dbArgs.PoolName, dbArgs.Name, dbArgs.Description, dbArgs.TypeName, db.StorageVolumeKindRegular, dbArgs.Config)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert the volume type name to our internal integer representation.
+	poolID, err := state.Cluster.StoragePoolGetID(dbArgs.PoolName)
+	if err != nil {
+		return nil, err
+	}
+
+	volumeType, err := storagePoolVolumeTypeNameToType(dbArgs.TypeName)
+	if err != nil {
+		state.Cluster.StoragePoolVolumeDelete(dbArgs.Name, volumeType, poolID)
+		return nil, err
+	}
+
+	// Initialize new storage volume on the target storage pool.
+	s, err := storagePoolVolumeInit(state, dbArgs.PoolName, dbArgs.Name, volumeType)
+	if err != nil {
+		state.Cluster.StoragePoolVolumeDelete(dbArgs.Name, volumeType, poolID)
+		return nil, err
+	}
+
+	return s, nil
 }

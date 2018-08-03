@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -589,7 +590,7 @@ func networkPatch(d *Daemon, r *http.Request) Response {
 
 	// Get the existing network
 	_, dbInfo, err := d.cluster.NetworkGet(name)
-	if dbInfo != nil {
+	if err != nil {
 		return SmartError(err)
 	}
 
@@ -964,7 +965,12 @@ func (n *network) Start() error {
 	// Create the bridge interface
 	if !n.IsRunning() {
 		if n.config["bridge.driver"] == "openvswitch" {
-			_, err := shared.RunCommand("ovs-vsctl", "add-br", n.name)
+			_, err := exec.LookPath("ovs-vsctl")
+			if err != nil {
+				return fmt.Errorf("Open vSwitch isn't installed on this system")
+			}
+
+			_, err = shared.RunCommand("ovs-vsctl", "add-br", n.name)
 			if err != nil {
 				return err
 			}
@@ -1038,6 +1044,14 @@ func (n *network) Start() error {
 	_, err = shared.RunCommand("ip", "link", "set", "dev", n.name, "mtu", mtu)
 	if err != nil {
 		return err
+	}
+
+	// Set the MAC address
+	if n.config["bridge.hwaddr"] != "" {
+		_, err = shared.RunCommand("ip", "link", "set", "dev", n.name, "address", n.config["bridge.hwaddr"])
+		if err != nil {
+			return err
+		}
 	}
 
 	// Bring it up
@@ -1221,9 +1235,16 @@ func (n *network) Start() error {
 
 		// Configure NAT
 		if shared.IsTrue(n.config["ipv4.nat"]) {
-			err = networkIptablesPrepend("ipv4", n.name, "nat", "POSTROUTING", "-s", subnet.String(), "!", "-d", subnet.String(), "-j", "MASQUERADE")
-			if err != nil {
-				return err
+			if n.config["ipv4.nat.order"] == "after" {
+				err = networkIptablesAppend("ipv4", n.name, "nat", "POSTROUTING", "-s", subnet.String(), "!", "-d", subnet.String(), "-j", "MASQUERADE")
+				if err != nil {
+					return err
+				}
+			} else {
+				err = networkIptablesPrepend("ipv4", n.name, "nat", "POSTROUTING", "-s", subnet.String(), "!", "-d", subnet.String(), "-j", "MASQUERADE")
+				if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -1280,10 +1301,10 @@ func (n *network) Start() error {
 		if (n.config["ipv6.dhcp"] == "" || shared.IsTrue(n.config["ipv6.dhcp"])) && (n.config["ipv6.firewall"] == "" || shared.IsTrue(n.config["ipv6.firewall"])) {
 			// Setup basic iptables overrides for DHCP/DNS
 			rules := [][]string{
-				{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "546", "-j", "ACCEPT"},
+				{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "547", "-j", "ACCEPT"},
 				{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "53", "-j", "ACCEPT"},
 				{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "tcp", "--dport", "53", "-j", "ACCEPT"},
-				{"ipv6", n.name, "", "OUTPUT", "-o", n.name, "-p", "udp", "--sport", "546", "-j", "ACCEPT"},
+				{"ipv6", n.name, "", "OUTPUT", "-o", n.name, "-p", "udp", "--sport", "547", "-j", "ACCEPT"},
 				{"ipv6", n.name, "", "OUTPUT", "-o", n.name, "-p", "udp", "--sport", "53", "-j", "ACCEPT"},
 				{"ipv6", n.name, "", "OUTPUT", "-o", n.name, "-p", "tcp", "--sport", "53", "-j", "ACCEPT"}}
 
@@ -1383,9 +1404,16 @@ func (n *network) Start() error {
 
 		// Configure NAT
 		if shared.IsTrue(n.config["ipv6.nat"]) {
-			err = networkIptablesPrepend("ipv6", n.name, "nat", "POSTROUTING", "-s", subnet.String(), "!", "-d", subnet.String(), "-j", "MASQUERADE")
-			if err != nil {
-				return err
+			if n.config["ipv6.nat.order"] == "after" {
+				err = networkIptablesAppend("ipv6", n.name, "nat", "POSTROUTING", "-s", subnet.String(), "!", "-d", subnet.String(), "-j", "MASQUERADE")
+				if err != nil {
+					return err
+				}
+			} else {
+				err = networkIptablesPrepend("ipv6", n.name, "nat", "POSTROUTING", "-s", subnet.String(), "!", "-d", subnet.String(), "-j", "MASQUERADE")
+				if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -1432,6 +1460,40 @@ func (n *network) Start() error {
 		addr := strings.Split(fanAddress, "/")
 		if n.config["fan.type"] == "ipip" {
 			fanAddress = fmt.Sprintf("%s/24", addr[0])
+		}
+
+		// Update the MTU based on overlay device (if available)
+		content, err := ioutil.ReadFile(fmt.Sprintf("/sys/class/net/%s/mtu", devName))
+		if err == nil {
+			// Parse value
+			fanMtuInt, err := strconv.ParseInt(strings.TrimSpace(string(content)), 10, 32)
+			if err != nil {
+				return err
+			}
+
+			// Apply overhead
+			if n.config["fan.type"] == "ipip" {
+				fanMtuInt = fanMtuInt - 20
+			} else {
+				fanMtuInt = fanMtuInt - 50
+			}
+
+			// Apply changes
+			fanMtu := fmt.Sprintf("%d", fanMtuInt)
+			if fanMtu != mtu {
+				mtu = fanMtu
+				if n.config["bridge.driver"] != "openvswitch" {
+					_, err = shared.RunCommand("ip", "link", "set", "dev", fmt.Sprintf("%s-mtu", n.name), "mtu", mtu)
+					if err != nil {
+						return err
+					}
+				}
+
+				_, err = shared.RunCommand("ip", "link", "set", "dev", n.name, "mtu", mtu)
+				if err != nil {
+					return err
+				}
+			}
 		}
 
 		// Parse the host subnet
@@ -1636,7 +1698,7 @@ func (n *network) Start() error {
 		// Check for dnsmasq
 		_, err := exec.LookPath("dnsmasq")
 		if err != nil {
-			return fmt.Errorf("dnsmasq is required for LXD managed bridges.")
+			return fmt.Errorf("dnsmasq is required for LXD managed bridges")
 		}
 
 		// Start dnsmasq (occasionally races, try a few times)
@@ -1746,8 +1808,15 @@ func (n *network) Update(newNetwork api.NetworkPut) error {
 	undoChanges := true
 	defer func() {
 		if undoChanges {
+			// Revert changes to the struct
 			n.config = oldConfig
 			n.description = oldDescription
+
+			// Update the database
+			n.state.Cluster.NetworkUpdate(n.name, n.description, n.config)
+
+			// Reset any change that was made to the bridge
+			n.Start()
 		}
 	}()
 

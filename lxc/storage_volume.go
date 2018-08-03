@@ -92,6 +92,10 @@ Unless specified through a prefix, all volume operations affect "custom" (user c
 	storageVolumeShowCmd := cmdStorageVolumeShow{global: c.global, storage: c.storage, storageVolume: c}
 	cmd.AddCommand(storageVolumeShowCmd.Command())
 
+	// Snapshot
+	storageVolumeSnapshotCmd := cmdStorageVolumeSnapshot{global: c.global, storage: c.storage, storageVolume: c}
+	cmd.AddCommand(storageVolumeSnapshotCmd.Command())
+
 	// Unset
 	storageVolumeUnsetCmd := cmdStorageVolumeUnset{global: c.global, storage: c.storage, storageVolume: c, storageVolumeSet: &storageVolumeSetCmd}
 	cmd.AddCommand(storageVolumeUnsetCmd.Command())
@@ -161,7 +165,7 @@ func (c *cmdStorageVolumeAttach) Run(cmd *cobra.Command, args []string) error {
 
 	volName, volType := c.storageVolume.parseVolume("custom", args[1])
 	if volType != "custom" {
-		return fmt.Errorf(i18n.G("Only \"custom\" volumes can be attached to containers."))
+		return fmt.Errorf(i18n.G("Only \"custom\" volumes can be attached to containers"))
 	}
 
 	// Check if the requested storage volume actually exists
@@ -240,7 +244,7 @@ func (c *cmdStorageVolumeAttachProfile) Run(cmd *cobra.Command, args []string) e
 
 	volName, volType := c.storageVolume.parseVolume("custom", args[1])
 	if volType != "custom" {
-		return fmt.Errorf(i18n.G("Only \"custom\" volumes can be attached to containers."))
+		return fmt.Errorf(i18n.G("Only \"custom\" volumes can be attached to containers"))
 	}
 
 	// Check if the requested storage volume actually exists
@@ -495,7 +499,8 @@ func (c *cmdStorageVolumeDelete) Command() *cobra.Command {
 
 func (c *cmdStorageVolumeDelete) Run(cmd *cobra.Command, args []string) error {
 	// Sanity checks
-	exit, err := c.global.CheckArgs(cmd, args, 2, 2)
+	// Sanity checks
+	exit, err := c.global.CheckArgs(cmd, args, 2, 3)
 	if exit {
 		return err
 	}
@@ -507,7 +512,6 @@ func (c *cmdStorageVolumeDelete) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	resource := resources[0]
-
 	if resource.name == "" {
 		return fmt.Errorf(i18n.G("Missing pool name"))
 	}
@@ -522,13 +526,21 @@ func (c *cmdStorageVolumeDelete) Run(cmd *cobra.Command, args []string) error {
 		client = client.UseTarget(c.storage.flagTarget)
 	}
 
-	// Delete the volume
-	err = client.DeleteStoragePoolVolume(resource.name, volType, volName)
+	msg := ""
+	if len(args) < 3 {
+		// Delete the volume
+		err = client.DeleteStoragePoolVolume(resource.name, volType, volName)
+		msg = args[1]
+	} else {
+		// Delete the snapshot
+		err = client.DeleteStoragePoolVolumeSnapshot(resource.name, volType, volName, args[2])
+		msg = args[2]
+	}
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf(i18n.G("Storage volume %s deleted")+"\n", args[1])
+	fmt.Printf(i18n.G("Storage volume %s deleted")+"\n", msg)
 
 	return nil
 }
@@ -588,7 +600,7 @@ func (c *cmdStorageVolumeDetach) Run(cmd *cobra.Command, args []string) error {
 		for n, d := range container.Devices {
 			if d["type"] == "disk" && d["pool"] == resource.name && d["source"] == args[1] {
 				if devName != "" {
-					return fmt.Errorf(i18n.G("More than one device matches, specify the device name."))
+					return fmt.Errorf(i18n.G("More than one device matches, specify the device name"))
 				}
 
 				devName = n
@@ -597,7 +609,7 @@ func (c *cmdStorageVolumeDetach) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	if devName == "" {
-		return fmt.Errorf(i18n.G("No device found for this storage volume."))
+		return fmt.Errorf(i18n.G("No device found for this storage volume"))
 	}
 
 	_, ok := container.Devices[devName]
@@ -669,7 +681,7 @@ func (c *cmdStorageVolumeDetachProfile) Run(cmd *cobra.Command, args []string) e
 		for n, d := range profile.Devices {
 			if d["type"] == "disk" && d["pool"] == resource.name && d["source"] == args[1] {
 				if devName != "" {
-					return fmt.Errorf(i18n.G("More than one device matches, specify the device name."))
+					return fmt.Errorf(i18n.G("More than one device matches, specify the device name"))
 				}
 
 				devName = n
@@ -678,7 +690,7 @@ func (c *cmdStorageVolumeDetachProfile) Run(cmd *cobra.Command, args []string) e
 	}
 
 	if devName == "" {
-		return fmt.Errorf(i18n.G("No device found for this storage volume."))
+		return fmt.Errorf(i18n.G("No device found for this storage volume"))
 	}
 
 	_, ok := profile.Devices[devName]
@@ -881,7 +893,7 @@ func (c *cmdStorageVolumeGet) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	for k, v := range resp.Config {
-		if k == args[1] {
+		if k == args[2] {
 			fmt.Printf("%s\n", v)
 		}
 	}
@@ -1242,4 +1254,77 @@ func (c *cmdStorageVolumeUnset) Run(cmd *cobra.Command, args []string) error {
 
 	args = append(args, "")
 	return c.storageVolumeSet.Run(cmd, args)
+}
+
+// Snapshot
+type cmdStorageVolumeSnapshot struct {
+	global        *cmdGlobal
+	storage       *cmdStorage
+	storageVolume *cmdStorageVolume
+
+	flagMode string
+}
+
+func (c *cmdStorageVolumeSnapshot) Command() *cobra.Command {
+	cmd := &cobra.Command{}
+	cmd.Use = i18n.G("snapshot [<remote>:]<pool> <volume> [<snapshot name>]")
+	cmd.Short = i18n.G("Snapshot storage volumes")
+	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
+		`Snapshot storage volumes`))
+
+	cmd.RunE = c.Run
+
+	return cmd
+}
+
+func (c *cmdStorageVolumeSnapshot) Run(cmd *cobra.Command, args []string) error {
+	// Sanity checks
+	exit, err := c.global.CheckArgs(cmd, args, 2, 3)
+	if exit {
+		return err
+	}
+
+	// Parse remote
+	resources, err := c.global.ParseServers(args[0])
+	if err != nil {
+		return err
+	}
+
+	resource := resources[0]
+	if resource.name == "" {
+		return fmt.Errorf(i18n.G("Missing pool name"))
+	}
+
+	client := resource.server
+
+	// Parse the input
+	volName, volType := c.storageVolume.parseVolume("custom", args[1])
+	if volType != "custom" {
+		return fmt.Errorf(i18n.G("Only \"custom\" volumes can be snapshotted"))
+	}
+
+	// Check if the requested storage volume actually exists
+	_, _, err = resource.server.GetStoragePoolVolume(resource.name, volType, volName)
+	if err != nil {
+		return err
+	}
+
+	var snapname string
+	if len(args) < 3 {
+		snapname = ""
+	} else {
+		snapname = args[2]
+	}
+
+	req := api.StorageVolumeSnapshotsPost{
+		Name: snapname,
+	}
+
+	op, err := client.CreateStoragePoolVolumeSnapshot(resource.name, volType, volName, req)
+	if err != nil {
+		return err
+	}
+
+	return op.Wait()
+
 }

@@ -343,7 +343,7 @@ func containerLXCCreate(s *state.State, args db.ContainerArgs) (container, error
 
 	if rootDiskDevice["pool"] == "" {
 		c.Delete()
-		return nil, fmt.Errorf("The container's root device is missing the pool property.")
+		return nil, fmt.Errorf("The container's root device is missing the pool property")
 	}
 
 	storagePool := rootDiskDevice["pool"]
@@ -363,7 +363,7 @@ func containerLXCCreate(s *state.State, args db.ContainerArgs) (container, error
 	}
 
 	// Create a new database entry for the container's storage volume
-	_, err = s.Cluster.StoragePoolVolumeCreate(args.Name, "", storagePoolVolumeTypeContainer, poolID, volumeConfig)
+	_, err = s.Cluster.StoragePoolVolumeCreate(args.Name, "", storagePoolVolumeTypeContainer, db.StorageVolumeKindRegular, poolID, volumeConfig)
 	if err != nil {
 		c.Delete()
 		return nil, err
@@ -866,7 +866,7 @@ func findIdmap(state *state.State, cName string, isolatedStr string, configBase 
 		return set, offset, nil
 	}
 
-	return nil, 0, fmt.Errorf("Not enough uid/gid available for the container.")
+	return nil, 0, fmt.Errorf("Not enough uid/gid available for the container")
 }
 
 func (c *containerLXC) init() error {
@@ -892,7 +892,7 @@ func (c *containerLXC) initLXC(config bool) error {
 
 	// Check if being called from a hook
 	if c.fromHook {
-		return fmt.Errorf("You can't use go-lxc from inside a LXC hook.")
+		return fmt.Errorf("You can't use go-lxc from inside a LXC hook")
 	}
 
 	// Check if already initialized
@@ -2414,7 +2414,7 @@ func (c *containerLXC) Start(stateful bool) error {
 	// If stateful, restore now
 	if stateful {
 		if !c.stateful {
-			return fmt.Errorf("Container has no existing state to restore.")
+			return fmt.Errorf("Container has no existing state to restore")
 		}
 
 		criuMigrationArgs := CriuMigrationArgs{
@@ -3014,7 +3014,7 @@ func (c *containerLXC) Render() (interface{}, interface{}, error) {
 			ExpandedConfig:  c.expandedConfig,
 			ExpandedDevices: c.expandedDevices,
 			LastUsedDate:    c.lastUsedDate,
-			Name:            c.name,
+			Name:            strings.SplitN(c.name, "/", 2)[1],
 			Profiles:        c.profiles,
 			Stateful:        c.stateful,
 		}, etag, nil
@@ -3144,7 +3144,7 @@ func (c *containerLXC) Restore(sourceContainer container, stateful bool) error {
 	if shared.PathExists(c.StatePath()) {
 		_, err := exec.LookPath("criu")
 		if err != nil {
-			return fmt.Errorf("Failed to restore container state. CRIU isn't installed.")
+			return fmt.Errorf("Failed to restore container state. CRIU isn't installed")
 		}
 	}
 
@@ -3342,6 +3342,21 @@ func (c *containerLXC) Delete() error {
 			logger.Error("Failed deleting container MAAS record", log.Ctx{"name": c.Name(), "err": err})
 			return err
 		}
+
+		// Update network files
+		networkUpdateStatic(c.state, "")
+		for k, m := range c.expandedDevices {
+			if m["type"] != "nic" || m["nictype"] != "bridged" {
+				continue
+			}
+
+			m, err := c.fillNetworkDevice(k, m)
+			if err != nil {
+				continue
+			}
+
+			networkClearLease(c.state, c.name, m["parent"], m["hwaddr"])
+		}
 	}
 
 	// Remove the database record
@@ -3362,21 +3377,6 @@ func (c *containerLXC) Delete() error {
 		if err != nil {
 			return err
 		}
-	}
-
-	// Update network files
-	networkUpdateStatic(c.state, "")
-	for k, m := range c.expandedDevices {
-		if (m["type"] != "nic" && m["type"] != "infiniband") || m["nictype"] != "bridged" || (m["ipv4.address"] == "" && m["ipv6.address"] == "") {
-			continue
-		}
-
-		m, err := c.fillNetworkDevice(k, m)
-		if err != nil {
-			continue
-		}
-
-		networkClearLease(c.state, m["parent"], m["hwaddr"])
 	}
 
 	logger.Info("Deleted container", ctxMap)
@@ -3724,21 +3724,21 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 	if userRequested {
 		for k, v := range args.Config {
 			if strings.HasPrefix(k, "volatile.") && c.localConfig[k] != v {
-				return fmt.Errorf("Volatile keys are read-only.")
+				return fmt.Errorf("Volatile keys are read-only")
 			}
 
 			if strings.HasPrefix(k, "image.") && c.localConfig[k] != v {
-				return fmt.Errorf("Image keys are read-only.")
+				return fmt.Errorf("Image keys are read-only")
 			}
 		}
 
 		for k, v := range c.localConfig {
 			if strings.HasPrefix(k, "volatile.") && args.Config[k] != v {
-				return fmt.Errorf("Volatile keys are read-only.")
+				return fmt.Errorf("Volatile keys are read-only")
 			}
 
 			if strings.HasPrefix(k, "image.") && args.Config[k] != v {
-				return fmt.Errorf("Image keys are read-only.")
+				return fmt.Errorf("Image keys are read-only")
 			}
 		}
 	}
@@ -3945,12 +3945,12 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 
 		if newLocalRootDiskDevice["pool"] == "" {
 			if len(newProfileRootDiskDevices) == 0 {
-				return fmt.Errorf("Update will cause the container to rely on a profile's root disk device but none was found.")
+				return fmt.Errorf("Update will cause the container to rely on a profile's root disk device but none was found")
 			} else if len(newProfileRootDiskDevices) > 1 {
-				return fmt.Errorf("Update will cause the container to rely on a profile's root disk device but conflicting devices were found.")
+				return fmt.Errorf("Update will cause the container to rely on a profile's root disk device but conflicting devices were found")
 			} else if c.expandedDevices[newProfileRootDiskDevices[0]]["pool"] != oldLocalRootDiskDevice["pool"] {
 				newRootDiskDeviceKey = newProfileRootDiskDevices[0]
-				return fmt.Errorf("Using the profile's root disk device would change the storage pool of the container.")
+				return fmt.Errorf("Using the profile's root disk device would change the storage pool of the container")
 			}
 		}
 	} else {
@@ -3964,14 +3964,14 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 			if len(oldProfileRootDiskDevices) > 0 {
 				oldRootDiskDeviceKey = oldProfileRootDiskDevices[0]
 				if oldExpandedDevices[oldRootDiskDeviceKey]["pool"] != newLocalRootDiskDevice["pool"] {
-					return fmt.Errorf("The new local root disk device would change the storage pool of the container.")
+					return fmt.Errorf("The new local root disk device would change the storage pool of the container")
 				}
 			}
 		} else {
 			if len(newProfileRootDiskDevices) == 0 {
-				return fmt.Errorf("Update will cause the container to rely on a profile's root disk device but none was found.")
+				return fmt.Errorf("Update will cause the container to rely on a profile's root disk device but none was found")
 			} else if len(newProfileRootDiskDevices) > 1 {
-				return fmt.Errorf("Using the profile's root disk device would change the storage pool of the container.")
+				return fmt.Errorf("Using the profile's root disk device would change the storage pool of the container")
 			}
 			newRootDiskDeviceKey = newProfileRootDiskDevices[0]
 		}
@@ -5089,7 +5089,7 @@ func (c *containerLXC) Migrate(args *CriuMigrationArgs) error {
 
 	_, err := exec.LookPath("criu")
 	if err != nil {
-		return fmt.Errorf("Unable to perform container live migration. CRIU isn't installed.")
+		return fmt.Errorf("Unable to perform container live migration. CRIU isn't installed")
 	}
 
 	logger.Info("Migrating container", ctxMap)
@@ -6850,6 +6850,10 @@ func (c *containerLXC) insertProxyDevice(devName string, m types.Device) error {
 		return fmt.Errorf("Can't add proxy device to stopped container")
 	}
 
+	if shared.IsTrue(m["nat"]) {
+		return c.doNat(devName, m)
+	}
+
 	proxyValues, err := setupProxyProcInfo(c, m)
 	if err != nil {
 		return err
@@ -6873,11 +6877,129 @@ func (c *containerLXC) insertProxyDevice(devName string, m types.Device) error {
 		proxyValues.listenAddrUid,
 		proxyValues.listenAddrMode,
 		proxyValues.securityGid,
-		proxyValues.securityUid)
+		proxyValues.securityUid,
+		proxyValues.proxyProtocol,
+	)
 	if err != nil {
 		return fmt.Errorf("Error occurred when starting proxy device: %s", err)
 	}
 
+	return nil
+}
+
+func (c *containerLXC) doNat(proxy string, device types.Device) error {
+	listenAddr, err := parseAddr(device["listen"])
+	if err != nil {
+		return err
+	}
+
+	connectAddr, err := parseAddr(device["connect"])
+	if err != nil {
+		return err
+	}
+
+	address, _, err := net.SplitHostPort(connectAddr.addr[0])
+	if err != nil {
+		return err
+	}
+
+	var IPv4Addr string
+	var IPv6Addr string
+
+	for _, name := range c.expandedDevices.DeviceNames() {
+		m := c.expandedDevices[name]
+		if m["type"] != "nic" || (m["type"] == "nic" && m["nictype"] != "bridged") {
+			continue
+		}
+
+		// Check whether the NIC has a static IP
+		ip := m["ipv4.address"]
+		// Ensure that the provided IP address matches the container's IP
+		// address otherwise we could mess with other containers.
+		if ip != "" && IPv4Addr == "" && (address == ip || address == "0.0.0.0") {
+			IPv4Addr = ip
+		}
+
+		ip = m["ipv6.address"]
+		if ip != "" && IPv6Addr == "" && (address == ip || address == "::") {
+			IPv6Addr = ip
+		}
+	}
+
+	if IPv4Addr == "" && IPv6Addr == "" {
+		return errors.New("NIC IP doesn't match proxy target IP")
+	}
+
+	iptablesComment := fmt.Sprintf("%s (%s)", c.Name(), proxy)
+
+	revert := true
+	defer func() {
+		if revert {
+			if IPv4Addr != "" {
+				containerIptablesClear("ipv4", iptablesComment, "nat")
+			}
+
+			if IPv6Addr != "" {
+				containerIptablesClear("ipv6", iptablesComment, "nat")
+			}
+		}
+	}()
+
+	for i, lAddr := range listenAddr.addr {
+		address, port, err := net.SplitHostPort(lAddr)
+		if err != nil {
+			return err
+		}
+		var cPort string
+		if len(connectAddr.addr) == 1 {
+			_, cPort, _ = net.SplitHostPort(connectAddr.addr[0])
+		} else {
+			_, cPort, _ = net.SplitHostPort(connectAddr.addr[i])
+		}
+
+		if IPv4Addr != "" {
+			// outbound <-> container
+			err := containerIptablesPrepend("ipv4", iptablesComment, "nat",
+				"PREROUTING", "-p", listenAddr.connType, "--destination",
+				address, "--dport", port, "-j", "DNAT",
+				"--to-destination", fmt.Sprintf("%s:%s", IPv4Addr, cPort))
+			if err != nil {
+				return err
+			}
+
+			// host <-> container
+			err = containerIptablesPrepend("ipv4", iptablesComment, "nat",
+				"OUTPUT", "-p", listenAddr.connType, "--destination",
+				address, "--dport", port, "-j", "DNAT",
+				"--to-destination", fmt.Sprintf("%s:%s", IPv4Addr, cPort))
+			if err != nil {
+				return err
+			}
+		}
+
+		if IPv6Addr != "" {
+			// outbound <-> container
+			err := containerIptablesPrepend("ipv6", iptablesComment, "nat",
+				"PREROUTING", "-p", listenAddr.connType, "--destination",
+				address, "--dport", port, "-j", "DNAT",
+				"--to-destination", fmt.Sprintf("[%s]:%s", IPv6Addr, cPort))
+			if err != nil {
+				return err
+			}
+
+			// host <-> container
+			err = containerIptablesPrepend("ipv6", iptablesComment, "nat",
+				"OUTPUT", "-p", listenAddr.connType, "--destination",
+				address, "--dport", port, "-j", "DNAT",
+				"--to-destination", fmt.Sprintf("[%s]:%s", IPv6Addr, cPort))
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	revert = false
+	logger.Info(fmt.Sprintf("Using NAT for proxy device '%s'", proxy))
 	return nil
 }
 
@@ -6886,8 +7008,18 @@ func (c *containerLXC) removeProxyDevice(devName string) error {
 		return fmt.Errorf("Can't remove proxy device from stopped container")
 	}
 
+	// Remove possible iptables entries
+	containerIptablesClear("ipv4", fmt.Sprintf("%s (%s)", c.Name(), devName), "nat")
+	containerIptablesClear("ipv6", fmt.Sprintf("%s (%s)", c.Name(), devName), "nat")
+
 	devFileName := fmt.Sprintf("proxy.%s", devName)
 	devPath := filepath.Join(c.DevicesPath(), devFileName)
+
+	if !shared.PathExists(devPath) {
+		// There's no proxy process if NAT is enabled
+		return nil
+	}
+
 	err := killProxyProc(devPath)
 	if err != nil {
 		return err
@@ -6897,6 +7029,10 @@ func (c *containerLXC) removeProxyDevice(devName string) error {
 }
 
 func (c *containerLXC) removeProxyDevices() error {
+	// Remove possible iptables entries
+	containerIptablesClear("ipv4", fmt.Sprintf("%s", c.Name()), "nat")
+	containerIptablesClear("ipv6", fmt.Sprintf("%s", c.Name()), "nat")
+
 	// Check that we actually have devices to remove
 	if !shared.PathExists(c.DevicesPath()) {
 		return nil
@@ -7540,7 +7676,7 @@ func (c *containerLXC) createDiskDevice(name string, m types.Device) (string, er
 		// yet support container mounts.
 
 		if filepath.IsAbs(m["source"]) {
-			return "", fmt.Errorf("When the \"pool\" property is set \"source\" must specify the name of a volume, not a path.")
+			return "", fmt.Errorf("When the \"pool\" property is set \"source\" must specify the name of a volume, not a path")
 		}
 
 		volumeTypeName := ""
@@ -7555,7 +7691,7 @@ func (c *containerLXC) createDiskDevice(name string, m types.Device) (string, er
 
 		switch volumeTypeName {
 		case storagePoolVolumeTypeNameContainer:
-			return "", fmt.Errorf("Using container storage volumes is not supported.")
+			return "", fmt.Errorf("Using container storage volumes is not supported")
 		case "":
 			// We simply received the name of a storage volume.
 			volumeTypeName = storagePoolVolumeTypeNameCustom
@@ -7563,9 +7699,9 @@ func (c *containerLXC) createDiskDevice(name string, m types.Device) (string, er
 		case storagePoolVolumeTypeNameCustom:
 			srcPath = shared.VarPath("storage-pools", m["pool"], volumeTypeName, volumeName)
 		case storagePoolVolumeTypeNameImage:
-			return "", fmt.Errorf("Using image storage volumes is not supported.")
+			return "", fmt.Errorf("Using image storage volumes is not supported")
 		default:
-			return "", fmt.Errorf("Unknown storage type prefix \"%s\" found.", volumeTypeName)
+			return "", fmt.Errorf("Unknown storage type prefix \"%s\" found", volumeTypeName)
 		}
 
 		// Initialize a new storage interface and check if the
@@ -7573,7 +7709,7 @@ func (c *containerLXC) createDiskDevice(name string, m types.Device) (string, er
 		volumeType, _ := storagePoolVolumeTypeNameToType(volumeTypeName)
 		s, err := storagePoolVolumeAttachInit(c.state, m["pool"], volumeName, volumeType, c)
 		if err != nil && !isOptional {
-			return "", fmt.Errorf("Failed to initialize storage volume \"%s\" of type \"%s\" on storage pool \"%s\": %s.",
+			return "", fmt.Errorf("Failed to initialize storage volume \"%s\" of type \"%s\" on storage pool \"%s\": %s",
 				volumeName,
 				volumeTypeName,
 				m["pool"], err)

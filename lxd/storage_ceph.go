@@ -1957,7 +1957,7 @@ func (s *storageCeph) ContainerBackupDump(backup backup) ([]byte, error) {
 	backupMntPoint := getBackupMountPoint(s.pool.Name, backup.Name())
 	logger.Debugf("Taring up \"%s\" on storage pool \"%s\"", backupMntPoint, s.pool.Name)
 
-	args := []string{"-cJf", "-", "-C", backupMntPoint, "--transform", "s,^./,backup/,"}
+	args := []string{"-cJf", "-", "--xattrs", "-C", backupMntPoint, "--transform", "s,^./,backup/,"}
 	if backup.ContainerOnly() {
 		// Exclude snapshots directory
 		args = append(args, "--exclude", fmt.Sprintf("%s/snapshots", backup.Name()))
@@ -2001,7 +2001,7 @@ func (s *storageCeph) ContainerBackupLoad(info backupInfo, data io.ReadSeeker) e
 
 		data.Seek(0, 0)
 		err = shared.RunCommandWithFds(data, nil, "tar", "-xJf", "-",
-			"--recursive-unlink", "--strip-components=3", "-C", containerMntPoint, cur)
+			"--recursive-unlink", "--strip-components=3", "--xattrs-include=*", "-C", containerMntPoint, cur)
 		if err != nil {
 			logger.Errorf("Failed to untar \"%s\" into \"%s\": %s", cur, containerMntPoint, err)
 			return err
@@ -2030,7 +2030,7 @@ func (s *storageCeph) ContainerBackupLoad(info backupInfo, data io.ReadSeeker) e
 	// Extract container
 	data.Seek(0, 0)
 	err = shared.RunCommandWithFds(data, nil, "tar", "-xJf", "-",
-		"--strip-components=2", "-C", containerMntPoint, "backup/container")
+		"--strip-components=2", "--xattrs-include=*", "-C", containerMntPoint, "backup/container")
 	if err != nil {
 		logger.Errorf("Failed to untar \"backup/container\" into \"%s\": %s", containerMntPoint, err)
 		return err
@@ -2680,4 +2680,44 @@ func (s *storageCeph) GetStoragePoolVolume() *api.StorageVolume {
 
 func (s *storageCeph) GetState() *state.State {
 	return s.s
+}
+
+func (s *storageCeph) StoragePoolVolumeSnapshotCreate(target *api.StorageVolumeSnapshotsPost) error {
+	logger.Debugf("Creating RBD storage volume snapshot \"%s\" on storage pool \"%s\"", s.volume.Name, s.pool.Name)
+
+	// This is costly but we need to ensure that all cached data has
+	// been committed to disk. If we don't then the rbd snapshot of
+	// the underlying filesystem can be inconsistent or - worst case
+	// - empty.
+	syscall.Sync()
+	sourcePath := getStoragePoolVolumeMountPoint(s.pool.Name, s.volume.Name)
+	msg, fsFreezeErr := shared.TryRunCommand("fsfreeze", "--freeze", sourcePath)
+	logger.Debugf("Trying to freeze the filesystem: %s: %s", msg, fsFreezeErr)
+	if fsFreezeErr == nil {
+		defer shared.TryRunCommand("fsfreeze", "--unfreeze", sourcePath)
+	}
+
+	sourceOnlyName, snapshotOnlyName, _ := containerGetParentAndSnapshotName(target.Name)
+	snapshotName := fmt.Sprintf("snapshot_%s", snapshotOnlyName)
+	err := cephRBDSnapshotCreate(s.ClusterName, s.OSDPoolName, sourceOnlyName, storagePoolVolumeTypeNameCustom, snapshotName, s.UserName)
+	if err != nil {
+		logger.Errorf("Failed to create snapshot for RBD storage volume for image \"%s\" on storage pool \"%s\": %s", sourceOnlyName, s.pool.Name, err)
+		return err
+	}
+
+	targetPath := getStoragePoolVolumeSnapshotMountPoint(s.pool.Name, target.Name)
+	err = os.MkdirAll(targetPath, snapshotsDirMode)
+	if err != nil {
+		logger.Errorf("Failed to create mountpoint \"%s\" for RBD storage volume \"%s\" on storage pool \"%s\": %s", targetPath, s.volume.Name, s.pool.Name, err)
+		return err
+	}
+
+	logger.Debugf("Created RBD storage volume snapshot \"%s\" on storage pool \"%s\"", s.volume.Name, s.pool.Name)
+	return nil
+}
+
+func (s *storageCeph) StoragePoolVolumeSnapshotDelete() error {
+	msg := fmt.Sprintf("Function not implemented")
+	logger.Errorf(msg)
+	return fmt.Errorf(msg)
 }

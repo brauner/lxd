@@ -34,7 +34,7 @@ var storagePoolVolumesTypeCmd = Command{
 }
 
 var storagePoolVolumeTypeCmd = Command{
-	name:   "storage-pools/{pool}/volumes/{type}/{name:.*}",
+	name:   "storage-pools/{pool}/volumes/{type}/{name}",
 	post:   storagePoolVolumeTypePost,
 	get:    storagePoolVolumeTypeGet,
 	put:    storagePoolVolumeTypePut,

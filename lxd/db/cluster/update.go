@@ -30,14 +30,33 @@ func SchemaDotGo() error {
 var SchemaVersion = len(updates)
 
 var updates = map[int]schema.Update{
-	1: updateFromV0,
-	2: updateFromV1,
-	3: updateFromV2,
-	4: updateFromV3,
-	5: updateFromV4,
-	6: updateFromV5,
-	7: updateFromV6,
-	8: updateFromV7,
+	1:  updateFromV0,
+	2:  updateFromV1,
+	3:  updateFromV2,
+	4:  updateFromV3,
+	5:  updateFromV4,
+	6:  updateFromV5,
+	7:  updateFromV6,
+	8:  updateFromV7,
+	9:  updateFromV8,
+	10: updateFromV9,
+}
+
+func updateFromV9(tx *sql.Tx) error {
+	stmt := `
+ALTER TABLE storage_volumes ADD COLUMN kind INTEGER NOT NULL DEFAULT 0;
+UPDATE storage_volumes SET kind = 0;
+`
+	_, err := tx.Exec(stmt)
+	return err
+}
+
+// The lvm.thinpool_name and lvm.vg_name config keys are node-specific and need
+// to be linked to nodes.
+func updateFromV8(tx *sql.Tx) error {
+	// Moved to patchLvmNodeSpecificConfigKeys, since there's no schema
+	// change. That makes it easier to backport.
+	return nil
 }
 
 func updateFromV7(tx *sql.Tx) error {

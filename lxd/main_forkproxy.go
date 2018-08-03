@@ -23,6 +23,7 @@ import (
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -42,6 +43,17 @@ int whoami = -ESRCH;
 #define FORKPROXY_CHILD 1
 #define FORKPROXY_PARENT 0
 #define FORKPROXY_UDS_SOCK_FD_NUM 200
+
+int switch_uid_gid(uint32_t uid, uint32_t gid)
+{
+	if (setgid((gid_t)gid) < 0)
+		return -1;
+
+	if (setuid((uid_t)uid) < 0)
+		return -1;
+
+	return 0;
+}
 
 int wait_for_pid(pid_t pid)
 {
@@ -324,7 +336,7 @@ func rearmUDPFd(epFd C.int, connFd C.int) {
 	}
 }
 
-func listenerInstance(epFd C.int, lAddr *proxyAddress, cAddr *proxyAddress, connFd C.int, lStruct *lStruct) error {
+func listenerInstance(epFd C.int, lAddr *proxyAddress, cAddr *proxyAddress, connFd C.int, lStruct *lStruct, proxy bool) error {
 	fmt.Printf("Starting %s <-> %s proxy\n", lAddr.connType, cAddr.connType)
 	if lAddr.connType == "udp" {
 		// This only handles udp <-> udp. The C constructor will have
@@ -379,10 +391,37 @@ func listenerInstance(epFd C.int, lAddr *proxyAddress, cAddr *proxyAddress, conn
 		return err
 	}
 
+	if proxy && cAddr.connType == "tcp" {
+		if lAddr.connType == "unix" {
+			dstConn.Write([]byte(fmt.Sprintf("PROXY UNKNOWN\r\n")))
+		} else {
+			cHost, cPort, err := net.SplitHostPort(srcConn.RemoteAddr().String())
+			if err != nil {
+				return err
+			}
+
+			dHost, dPort, err := net.SplitHostPort(srcConn.LocalAddr().String())
+			if err != nil {
+				return err
+			}
+
+			proto := srcConn.LocalAddr().Network()
+			proto = strings.ToUpper(proto)
+			if strings.Contains(cHost, ":") {
+				proto = fmt.Sprintf("%s6", proto)
+			} else {
+				proto = fmt.Sprintf("%s4", proto)
+			}
+
+			dstConn.Write([]byte(fmt.Sprintf("PROXY %s %s %s %s %s\r\n", proto, cHost, dHost, cPort, dPort)))
+		}
+	}
+
 	if cAddr.connType == "unix" && lAddr.connType == "unix" {
 		// Handle OOB if both src and dst are using unix sockets
 		go unixRelay(srcConn, dstConn)
 	} else {
+
 		go genericRelay(srcConn, dstConn, false)
 	}
 
@@ -403,7 +442,7 @@ func (c *cmdForkproxy) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	// Sanity checks
-	if len(args) != 11 {
+	if len(args) != 12 {
 		cmd.Help()
 
 		if len(args) == 0 {
@@ -557,27 +596,26 @@ func (c *cmdForkproxy) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	// Drop privilege if requested
+	gid := uint64(0)
 	if args[9] != "" {
-		gid, err := strconv.ParseInt(args[9], 10, 32)
+		gid, err = strconv.ParseUint(args[9], 10, 32)
 		if err != nil {
 			return err
-		}
-
-		errno := C.setgid(C.__gid_t(gid))
-		if errno < 0 {
-			return fmt.Errorf("setgid: %v", errno)
 		}
 	}
 
+	uid := uint64(0)
 	if args[10] != "" {
-		uid, err := strconv.ParseInt(args[10], 10, 32)
+		uid, err = strconv.ParseUint(args[10], 10, 32)
 		if err != nil {
 			return err
 		}
+	}
 
-		errno := C.setuid(C.__uid_t(uid))
-		if errno < 0 {
-			return fmt.Errorf("setuid: %v", errno)
+	if uid != 0 || gid != 0 {
+		ret := C.switch_uid_gid(C.uint32_t(uid), C.uint32_t(gid))
+		if ret < 0 {
+			return fmt.Errorf("Failed to switch to uid %d and gid %d", uid, gid)
 		}
 	}
 
@@ -647,7 +685,7 @@ func (c *cmdForkproxy) Run(cmd *cobra.Command, args []string) error {
 				continue
 			}
 
-			err := listenerInstance(epFd, lAddr, cAddr, curFd, srcConn)
+			err := listenerInstance(epFd, lAddr, cAddr, curFd, srcConn, args[11] == "true")
 			if err != nil {
 				fmt.Printf("Failed to prepare new listener instance: %s", err)
 			}
@@ -996,6 +1034,10 @@ func parseAddr(addr string) (*proxyAddress, error) {
 	// Split into <protocol> and <address>
 	fields := strings.SplitN(addr, ":", 2)
 
+	if !shared.StringInSlice(fields[0], []string{"tcp", "udp", "unix"}) {
+		return nil, fmt.Errorf("Unknown connection type '%s'", fields[0])
+	}
+
 	newProxyAddr := &proxyAddress{
 		connType: fields[0],
 		abstract: strings.HasPrefix(fields[1], "@"),
@@ -1008,23 +1050,27 @@ func parseAddr(addr string) (*proxyAddress, error) {
 	}
 
 	// Split <address> into <address> and <ports>
-	addrParts := strings.SplitN(fields[1], ":", 2)
-	// no ports
-	if len(addrParts) == 1 {
-		newProxyAddr.addr = []string{fields[1]}
-		return newProxyAddr, nil
+	address, port, err := net.SplitHostPort(fields[1])
+	if err != nil {
+		return nil, err
 	}
 
 	// Split <ports> into individual ports and port ranges
-	ports := strings.SplitN(addrParts[1], ",", -1)
-	for _, port := range ports {
-		portFirst, portRange, err := parsePortRange(port)
+	ports := strings.SplitN(port, ",", -1)
+	for _, p := range ports {
+		portFirst, portRange, err := parsePortRange(p)
 		if err != nil {
 			return nil, err
 		}
 
 		for i := int64(0); i < portRange; i++ {
-			newAddr := fmt.Sprintf("%s:%d", addrParts[0], portFirst+i)
+			var newAddr string
+			if strings.Contains(address, ":") {
+				// IPv6 addresses need to be enclosed in square brackets
+				newAddr = fmt.Sprintf("[%s]:%d", address, portFirst+i)
+			} else {
+				newAddr = fmt.Sprintf("%s:%d", address, portFirst+i)
+			}
 			newProxyAddr.addr = append(newProxyAddr.addr, newAddr)
 		}
 	}

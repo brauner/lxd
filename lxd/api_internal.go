@@ -212,6 +212,12 @@ func internalSQLPost(d *Daemon, r *http.Request) Response {
 	}
 
 	batch := internalSQLBatch{}
+
+	if req.Query == ".sync" {
+		d.gateway.Sync()
+		return SyncResponse(true, batch)
+	}
+
 	for _, query := range strings.Split(req.Query, ";") {
 		query = strings.TrimLeft(query, " ")
 
@@ -395,6 +401,13 @@ func internalImport(d *Daemon, r *http.Request) Response {
 	backup, err := slurpBackupFile(backupYamlPath)
 	if err != nil {
 		return SmartError(err)
+	}
+
+	// Update snapshot names to include container name (if needed)
+	for i, snap := range backup.Snapshots {
+		if !strings.Contains(snap.Name, "/") {
+			backup.Snapshots[i].Name = fmt.Sprintf("%s/%s", backup.Container.Name, snap.Name)
+		}
 	}
 
 	// Try to retrieve the storage pool the container supposedly lives on.

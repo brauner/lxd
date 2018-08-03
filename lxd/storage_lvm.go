@@ -1829,7 +1829,7 @@ func (s *storageLvm) ContainerBackupRename(backup backup, newName string) error 
 func (s *storageLvm) ContainerBackupDump(backup backup) ([]byte, error) {
 	var buffer bytes.Buffer
 
-	args := []string{"-cJf", "-", "-C", getBackupMountPoint(s.pool.Name, backup.Name()),
+	args := []string{"-cJf", "-", "--xattrs", "-C", getBackupMountPoint(s.pool.Name, backup.Name()),
 		"--transform", "s,^./,backup/,"}
 	if backup.ContainerOnly() {
 		// Exclude snapshots directory
@@ -1854,7 +1854,7 @@ func (s *storageLvm) ContainerBackupLoad(info backupInfo, data io.ReadSeeker) er
 
 	// Extract container
 	data.Seek(0, 0)
-	err = shared.RunCommandWithFds(data, nil, "tar", "-xJf", "-", "--strip-components=2",
+	err = shared.RunCommandWithFds(data, nil, "tar", "-xJf", "-", "--strip-components=2", "--xattrs-include=*",
 		"-C", containerPath, "backup/container")
 	if err != nil {
 		return err
@@ -1870,7 +1870,7 @@ func (s *storageLvm) ContainerBackupLoad(info backupInfo, data io.ReadSeeker) er
 		// Extract snapshots
 		data.Seek(0, 0)
 		err = shared.RunCommandWithFds(data, nil, "tar", "-xJf", "-",
-			"--strip-components=3", "-C", containerPath, fmt.Sprintf("backup/snapshots/%s", snap))
+			"--strip-components=3", "--xattrs-include=*", "-C", containerPath, fmt.Sprintf("backup/snapshots/%s", snap))
 		if err != nil {
 			return err
 		}
@@ -2342,4 +2342,36 @@ func (s *storageLvm) GetStoragePoolVolume() *api.StorageVolume {
 
 func (s *storageLvm) GetState() *state.State {
 	return s.s
+}
+
+func (s *storageLvm) StoragePoolVolumeSnapshotCreate(target *api.StorageVolumeSnapshotsPost) error {
+	logger.Debugf("Creating LVM storage volume for snapshot \"%s\" on storage pool \"%s\"", s.volume.Name, s.pool.Name)
+
+	poolName := s.getOnDiskPoolName()
+	sourceOnlyName, _, ok := containerGetParentAndSnapshotName(target.Name)
+	if !ok {
+		return fmt.Errorf("Not a snapshot")
+	}
+
+	targetLvmName := containerNameToLVName(target.Name)
+	_, err := s.createSnapshotLV(poolName, sourceOnlyName, storagePoolVolumeAPIEndpointCustom, targetLvmName, storagePoolVolumeAPIEndpointCustom, true, s.useThinpool)
+	if err != nil {
+		return fmt.Errorf("Failed to create snapshot logical volume %s", err)
+	}
+
+	targetPath := getStoragePoolVolumeSnapshotMountPoint(s.pool.Name, target.Name)
+	err = os.MkdirAll(targetPath, snapshotsDirMode)
+	if err != nil {
+		logger.Errorf("Failed to create mountpoint \"%s\" for RBD storage volume \"%s\" on storage pool \"%s\": %s", targetPath, s.volume.Name, s.pool.Name, err)
+		return err
+	}
+
+	logger.Debugf("Created LVM storage volume for snapshot \"%s\" on storage pool \"%s\"", s.volume.Name, s.pool.Name)
+	return nil
+}
+
+func (s *storageLvm) StoragePoolVolumeSnapshotDelete() error {
+	msg := fmt.Sprintf("Function not implemented")
+	logger.Errorf(msg)
+	return fmt.Errorf(msg)
 }

@@ -52,7 +52,7 @@ func (s *storageZfs) StorageCoreInit() error {
 	util.LoadModule("zfs")
 
 	if !zfsIsEnabled() {
-		return fmt.Errorf("the \"zfs\" tool is not enabled")
+		return fmt.Errorf("The \"zfs\" tool is not enabled")
 	}
 
 	s.sTypeVersion, err = zfsModuleVersionGet()
@@ -314,6 +314,23 @@ func (s *storageZfs) zfsPoolCreate() error {
 	}
 
 	fixperms = shared.VarPath("storage-pools", s.pool.Name, "snapshots")
+	err = os.MkdirAll(fixperms, snapshotsDirMode)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	err = os.Chmod(fixperms, snapshotsDirMode)
+	if err != nil {
+		logger.Warnf("Failed to chmod \"%s\" to \"0%s\": %s", fixperms, strconv.FormatInt(int64(snapshotsDirMode), 8), err)
+	}
+
+	dataset = fmt.Sprintf("%s/custom-snapshots", poolName)
+	msg, err = zfsPoolVolumeCreate(dataset, "mountpoint=none")
+	if err != nil {
+		logger.Errorf("Failed to create snapshots dataset: %s", msg)
+		return err
+	}
+
+	fixperms = shared.VarPath("storage-pools", s.pool.Name, "custom-snapshots")
 	err = os.MkdirAll(fixperms, snapshotsDirMode)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -2086,7 +2103,7 @@ func (s *storageZfs) ContainerBackupDump(backup backup) ([]byte, error) {
 	backupMntPoint := getBackupMountPoint(s.pool.Name, backup.Name())
 	logger.Debugf("Taring up \"%s\" on storage pool \"%s\"", backupMntPoint, s.pool.Name)
 
-	args := []string{"-cJf", "-", "-C", backupMntPoint, "--transform", "s,^./,backup/,"}
+	args := []string{"-cJf", "-", "--xattrs", "-C", backupMntPoint, "--transform", "s,^./,backup/,"}
 	if backup.ContainerOnly() {
 		// Exclude snapshots directory
 		args = append(args, "--exclude", fmt.Sprintf("%s/snapshots", backup.Name()))
@@ -2227,7 +2244,7 @@ func (s *storageZfs) doContainerBackupLoadVanilla(info backupInfo, data io.ReadS
 
 		data.Seek(0, 0)
 		err = shared.RunCommandWithFds(data, nil, "tar", "-xJf", "-",
-			"--recursive-unlink", "--strip-components=3", "-C", containerMntPoint, cur)
+			"--recursive-unlink", "--strip-components=3", "--xattrs-include=*", "-C", containerMntPoint, cur)
 		if err != nil {
 			logger.Errorf("Failed to untar \"%s\" into \"%s\": %s", cur, containerMntPoint, err)
 			return err
@@ -2243,7 +2260,7 @@ func (s *storageZfs) doContainerBackupLoadVanilla(info backupInfo, data io.ReadS
 	// Extract container
 	data.Seek(0, 0)
 	err = shared.RunCommandWithFds(data, nil, "tar", "-xJf", "-",
-		"--strip-components=2", "-C", containerMntPoint, "backup/container")
+		"--strip-components=2", "--xattrs-include=*", "-C", containerMntPoint, "backup/container")
 	if err != nil {
 		logger.Errorf("Failed to untar \"backup/container\" into \"%s\": %s", containerMntPoint, err)
 		return err
@@ -2998,4 +3015,38 @@ func (s *storageZfs) GetStoragePoolVolume() *api.StorageVolume {
 
 func (s *storageZfs) GetState() *state.State {
 	return s.s
+}
+
+func (s *storageZfs) StoragePoolVolumeSnapshotCreate(target *api.StorageVolumeSnapshotsPost) error {
+	logger.Infof("Creating ZFS storage volume snapshot \"%s\" on storage pool \"%s\"", s.volume.Name, s.pool.Name)
+
+	sourceOnlyName, snapshotOnlyName, ok := containerGetParentAndSnapshotName(target.Name)
+	if !ok {
+		return fmt.Errorf("Not a snapshot name")
+	}
+
+	sourceDataset := fmt.Sprintf("custom/%s", sourceOnlyName)
+	poolName := s.getOnDiskPoolName()
+	dataset := fmt.Sprintf("%s/%s", poolName, sourceDataset)
+	snapName := fmt.Sprintf("snapshot-%s", snapshotOnlyName)
+	err := zfsPoolVolumeSnapshotCreate(poolName, dataset, snapName)
+	if err != nil {
+		return err
+	}
+
+	targetPath := getStoragePoolVolumeMountPoint(s.pool.Name, target.Name)
+	err = os.MkdirAll(targetPath, snapshotsDirMode)
+	if err != nil {
+		logger.Errorf("Failed to create mountpoint \"%s\" for ZFS storage volume \"%s\" on storage pool \"%s\": %s", targetPath, s.volume.Name, s.pool.Name, err)
+		return err
+	}
+
+	logger.Infof("Created ZFS storage volume snapshot \"%s\" on storage pool \"%s\"", s.volume.Name, s.pool.Name)
+	return nil
+}
+
+func (s *storageZfs) StoragePoolVolumeSnapshotDelete() error {
+	msg := fmt.Sprintf("Function not implemented")
+	logger.Errorf(msg)
+	return fmt.Errorf(msg)
 }
