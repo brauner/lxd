@@ -199,6 +199,7 @@ type ContainerServer interface {
 
 	// Storage volume snapshot functions ("storage_api_volume_snapshots" API extension)
 	CreateStoragePoolVolumeSnapshot(pool string, volumeType string, volume string, snapshot api.StorageVolumeSnapshotsPost) (op Operation, err error)
+	DeleteStoragePoolVolumeSnapshot(pool string, volType string, name string, snapshotName string) (err error)
 
 	// Cluster functions ("cluster" API extensions)
 	GetCluster() (cluster *api.Cluster, ETag string, err error)
