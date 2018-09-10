@@ -6,9 +6,11 @@ package shared
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/gorilla/websocket"
 
+	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/logger"
 )
 
@@ -20,9 +22,11 @@ import (
 #include <linux/if.h>
 #include <linux/if_addr.h>
 #include <linux/if_link.h>
+#include <linux/if_packet.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <linux/types.h>
+#include <net/ethernet.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -573,12 +577,33 @@ static void print_ip(const char *name, struct netns_ifaddrs *ifaddrs_ptr, void *
 // Get a pointer to the address structure from a sockaddr.
 static void *get_addr_ptr(struct sockaddr *sockaddr_ptr)
 {
-	void *addr_ptr = 0;
 	if (sockaddr_ptr->sa_family == AF_INET)
-		addr_ptr = &((struct sockaddr_in *)sockaddr_ptr)->sin_addr;
-	else if (sockaddr_ptr->sa_family == AF_INET6)
-		addr_ptr = &((struct sockaddr_in6 *)sockaddr_ptr)->sin6_addr;
-	return addr_ptr;
+		return &((struct sockaddr_in *)sockaddr_ptr)->sin_addr;
+
+	if (sockaddr_ptr->sa_family == AF_INET6)
+		return &((struct sockaddr_in6 *)sockaddr_ptr)->sin6_addr;
+
+	return NULL;
+}
+
+static char *get_packet_address(struct sockaddr *sockaddr_ptr, char *buf, size_t buflen)
+{
+	char *slider = buf;
+	unsigned char *m = ((struct sockaddr_ll *)sockaddr_ptr)->sll_addr;
+	unsigned char n = ((struct sockaddr_ll *)sockaddr_ptr)->sll_halen;
+
+	for (unsigned char i = 0; i < n; i++) {
+		int ret;
+
+		ret = snprintf(slider, buflen, "%02x%s", m[i], (i + 1) < n ? ":" : "");
+		if (ret < 0 || (size_t)ret >= buflen)
+			return NULL;
+
+		buflen -= ret;
+		slider = (slider + ret);
+	}
+
+	return buf;
 }
 
 // Print the internet address.
@@ -647,18 +672,105 @@ void print_ifaddrs(struct netns_ifaddrs *ifaddrs_ptr)
 */
 import "C"
 
-func NetnsGetifaddrs(netnsID int32) error {
+func NetnsGetifaddrs(netnsID int32) (map[string]api.NetworkState, error) {
 	var ifaddrs *C.struct_netns_ifaddrs
 
-	ret := C.netns_getifaddrs(&ifaddrs, C.__s32(netnsID))
+	ret := C.netns_getifaddrs(&ifaddrs, C.__s32(-C.EINVAL))
 	if ret < 0 {
-		return fmt.Errorf("Failed to retrieve interfaces and addresses")
+		return nil, fmt.Errorf("Failed to retrieve network interfaces and addresses")
+	}
+	defer C.netns_freeifaddrs(ifaddrs)
+
+	// We're using the interface name as key here but we should really
+	// switch to the ifindex at some point to handle ip aliasing correctly.
+	networks := map[string]api.NetworkState{}
+
+	for addr := ifaddrs; addr != nil; addr = addr.ifa_next {
+		var address [C.INET6_ADDRSTRLEN]C.char
+		addNetwork := networks[C.GoString(addr.ifa_name)]
+
+		if addr.ifa_addr.sa_family == C.AF_INET || addr.ifa_addr.sa_family == C.AF_INET6 {
+			netState := "down"
+			netType := "unknown"
+
+			if (addr.ifa_flags & C.IFF_BROADCAST) > 0 {
+				netType = "broadcast"
+			}
+
+			if (addr.ifa_flags & C.IFF_LOOPBACK) > 0 {
+				netType = "loopback"
+			}
+
+			if (addr.ifa_flags & C.IFF_POINTOPOINT) > 0 {
+				netType = "point-to-point"
+			}
+
+			if (addr.ifa_flags & C.IFF_UP) > 0 {
+				netState = "up"
+			}
+
+			family := "inet"
+			if addr.ifa_addr.sa_family == C.AF_INET6 {
+				family = "inet6"
+			}
+
+			addr_ptr := C.get_addr_ptr(addr.ifa_addr)
+			if addr_ptr == nil {
+				return nil, fmt.Errorf("Failed to retrieve valid address pointer")
+			}
+
+			address_str := C.inet_ntop(C.int(addr.ifa_addr.sa_family), addr_ptr, &address[0], C.INET6_ADDRSTRLEN)
+			if address_str == nil {
+				return nil, fmt.Errorf("Failed to retrieve address string")
+			}
+
+			if addNetwork.Addresses == nil {
+				addNetwork.Addresses = []api.NetworkStateAddress{}
+			}
+
+			goAddrString := C.GoString(address_str)
+			scope := "global"
+			if strings.HasPrefix(goAddrString, "127") {
+				scope = "local"
+			}
+
+			if goAddrString == "::1" {
+				scope = "local"
+			}
+
+			if strings.HasPrefix(goAddrString, "169.254") {
+				scope = "link"
+			}
+
+			if strings.HasPrefix(goAddrString, "fe80:") {
+				scope = "link"
+			}
+
+			address := api.NetworkStateAddress{}
+			address.Family = family
+			address.Address = goAddrString
+			address.Netmask = fmt.Sprintf("%d", int(addr.ifa_prefixlen))
+			address.Scope = scope
+
+			addNetwork.Addresses = append(addNetwork.Addresses, address)
+			addNetwork.State = netState
+			addNetwork.Type = netType
+			addNetwork.Mtu = int(addr.ifa_mtu)
+		} else if addr.ifa_addr.sa_family == C.AF_PACKET {
+			var buf [1024]C.char
+
+			hwaddr := C.get_packet_address(addr.ifa_addr, &buf[0], 1024)
+			if hwaddr == nil {
+				return nil, fmt.Errorf("Failed to retrieve hardware address")
+			}
+
+			addNetwork.Hwaddr = C.GoString(hwaddr)
+		}
+
+		addNetwork.Counters = api.NetworkStateCounters{}
 	}
 
-	C.print_ifaddrs(ifaddrs)
-	C.netns_freeifaddrs(ifaddrs)
-
-	return nil
+	return networks, nil
 }
 
 func WebsocketExecMirror(conn *websocket.Conn, w io.WriteCloser, r io.ReadCloser, exited chan bool, fd int) (chan bool, chan bool) {
