@@ -687,7 +687,13 @@ func NetnsGetifaddrs(netnsID int32) (map[string]api.NetworkState, error) {
 
 	for addr := ifaddrs; addr != nil; addr = addr.ifa_next {
 		var address [C.INET6_ADDRSTRLEN]C.char
-		addNetwork := networks[C.GoString(addr.ifa_name)]
+		addNetwork, networkExists := networks[C.GoString(addr.ifa_name)]
+		if !networkExists {
+			addNetwork = api.NetworkState{
+				Addresses: []api.NetworkStateAddress{},
+				Counters:  api.NetworkStateCounters{},
+			}
+		}
 
 		if addr.ifa_addr.sa_family == C.AF_INET || addr.ifa_addr.sa_family == C.AF_INET6 {
 			netState := "down"
@@ -767,7 +773,12 @@ func NetnsGetifaddrs(netnsID int32) (map[string]api.NetworkState, error) {
 			addNetwork.Hwaddr = C.GoString(hwaddr)
 		}
 
-		addNetwork.Counters = api.NetworkStateCounters{}
+		ifName := C.GoString(addr.ifa_name)
+		if !networkExists {
+			addNetwork.Counters = NetworkGetCounters(ifName)
+		}
+
+		networks[ifName] = addNetwork
 	}
 
 	return networks, nil
