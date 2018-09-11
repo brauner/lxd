@@ -6,6 +6,7 @@ package shared
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/gorilla/websocket"
@@ -490,7 +491,7 @@ static int __netlink_recv(int fd, unsigned int seq, int type, int af,
 	else
 		return -1;
 
-	if (netns_id != -EINVAL)
+	if (netns_id >= 0)
 		addattr(hdr, 1024, property, &netns_id, sizeof(netns_id));
 
 	r = __netlink_send(fd, hdr);
@@ -669,13 +670,222 @@ void print_ifaddrs(struct netns_ifaddrs *ifaddrs_ptr)
 
 	print_ifaddrs(ifa_next);
 }
+
+extern int netlink_open(int protocol)
+{
+	int fd, ret;
+	socklen_t socklen;
+	struct sockaddr_nl local;
+	int sndbuf = 32768;
+	int rcvbuf = 32768;
+	int err = -1;
+
+	fd = socket(AF_NETLINK, SOCK_RAW, protocol);
+	if (fd < 0)
+		return -1;
+
+	ret = setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+	if (ret < 0)
+		goto out;
+
+	ret = setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+	if (ret < 0)
+		goto out;
+
+	ret = bind(fd, (struct sockaddr *)&local, sizeof(local));
+	if (ret < 0)
+		goto out;
+
+	socklen = sizeof(local);
+	ret = getsockname(fd, (struct sockaddr *)&local, &socklen);
+	if (ret < 0)
+		goto out;
+
+	errno = -EINVAL;
+	if (socklen != sizeof(local))
+		goto out;
+
+	errno = -EINVAL;
+	if (local.nl_family != AF_NETLINK)
+		goto out;
+
+	return 0;
+
+out:
+	close(fd);
+	return err;
+}
+
+static int netlink_recv(int fd, struct nlmsghdr *nlmsghdr)
+{
+	int ret;
+	struct sockaddr_nl nladdr;
+	struct iovec iov = {
+	    .iov_base = nlmsghdr,
+	    .iov_len = nlmsghdr->nlmsg_len,
+	};
+
+	struct msghdr msg = {
+	    .msg_name = &nladdr,
+	    .msg_namelen = sizeof(nladdr),
+	    .msg_iov = &iov,
+	    .msg_iovlen = 1,
+	};
+
+	memset(&nladdr, 0, sizeof(nladdr));
+	nladdr.nl_family = AF_NETLINK;
+	nladdr.nl_pid = 0;
+	nladdr.nl_groups = 0;
+
+again:
+	ret = recvmsg(fd, &msg, 0);
+	if (ret < 0) {
+		if (errno == EINTR)
+			goto again;
+
+		return -1;
+	}
+
+	if (!ret)
+		return 0;
+
+	if (msg.msg_flags & MSG_TRUNC && (ret == nlmsghdr->nlmsg_len)) {
+		errno = EMSGSIZE;
+		ret = -1;
+	}
+
+	return ret;
+}
+
+enum {
+	__LXC_NETNSA_NONE,
+#define __LXC_NETNSA_NSID_NOT_ASSIGNED -1
+	__LXC_NETNSA_NSID,
+	__LXC_NETNSA_PID,
+	__LXC_NETNSA_FD,
+	__LXC_NETNSA_MAX,
+};
+
+static int netlink_transaction(int fd, struct nlmsghdr *request,
+			       struct nlmsghdr *answer)
+{
+	int ret;
+
+	ret = __netlink_send(fd, request);
+	if (ret < 0)
+		return -1;
+
+	ret = netlink_recv(fd, answer);
+	if (ret < 0)
+		return -1;
+
+	ret = 0;
+	if (answer->nlmsg_type == NLMSG_ERROR) {
+		struct nlmsgerr *err = (struct nlmsgerr *)NLMSG_DATA(answer);
+		errno = -err->error;
+		if (err->error < 0)
+			ret = -1;
+	}
+
+	return ret;
+}
+
+static int parse_rtattr_flags(struct rtattr *tb[], int max, struct rtattr *rta,
+			      int len, unsigned short flags)
+{
+	unsigned short type;
+
+	memset(tb, 0, sizeof(struct rtattr *) * (max + 1));
+	while (RTA_OK(rta, len)) {
+		type = rta->rta_type & ~flags;
+		if ((type <= max) && (!tb[type]))
+			tb[type] = rta;
+		rta = RTA_NEXT(rta, len);
+	}
+
+	return 0;
+}
+
+static int parse_rtattr(struct rtattr *tb[], int max, struct rtattr *rta, int len)
+{
+	return parse_rtattr_flags(tb, max, rta, len, 0);
+}
+
+static inline __s32 rta_getattr_s32(const struct rtattr *rta)
+{
+	return *(__s32 *)RTA_DATA(rta);
+}
+
+#ifndef NETNS_RTA
+#define NETNS_RTA(r) \
+	((struct rtattr *)(((char *)(r)) + NLMSG_ALIGN(sizeof(struct rtgenmsg))))
+#endif
+
+__s32 netns_get_nsid(int netns_fd)
+{
+	int fd, ret;
+	ssize_t len;
+	char buf[NLMSG_ALIGN(sizeof(struct nlmsghdr)) +
+		 NLMSG_ALIGN(sizeof(struct rtgenmsg)) + NLMSG_ALIGN(1024)];
+	struct rtattr *tb[__LXC_NETNSA_MAX + 1];
+	struct nlmsghdr *hdr;
+	struct rtgenmsg *msg;
+	int saved_errno;
+
+	fd = netlink_open(NETLINK_ROUTE);
+	if (fd < 0)
+		return -1;
+
+	memset(buf, 0, sizeof(buf));
+	hdr = (struct nlmsghdr *)buf;
+	msg = (struct rtgenmsg *)NLMSG_DATA(hdr);
+
+	hdr->nlmsg_len = NLMSG_LENGTH(sizeof(*msg));
+	hdr->nlmsg_type = RTM_GETNSID;
+	hdr->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+	hdr->nlmsg_pid = 0;
+	hdr->nlmsg_seq = RTM_GETNSID;
+	msg->rtgen_family = AF_UNSPEC;
+
+	addattr(hdr, 1024, __LXC_NETNSA_FD, &netns_fd, sizeof(__s32));
+
+	ret = netlink_transaction(fd, hdr, hdr);
+	saved_errno = errno;
+	close(fd);
+	errno = saved_errno;
+	if (ret < 0)
+		return -1;
+
+	msg = NLMSG_DATA(hdr);
+	len = hdr->nlmsg_len - NLMSG_SPACE(sizeof(*msg));
+	if (len < 0)
+		return -1;
+
+	parse_rtattr(tb, __LXC_NETNSA_MAX, NETNS_RTA(msg), len);
+	if (tb[__LXC_NETNSA_NSID]) {
+		return rta_getattr_s32(tb[__LXC_NETNSA_NSID]);
+	}
+
+	return -1;
+}
 */
 import "C"
 
-func NetnsGetifaddrs(netnsID int32) (map[string]api.NetworkState, error) {
+func NetnsGetifaddrs(initPID int32) (map[string]api.NetworkState, error) {
 	var ifaddrs *C.struct_netns_ifaddrs
 
-	ret := C.netns_getifaddrs(&ifaddrs, C.__s32(-C.EINVAL))
+	f, err := os.Open(fmt.Sprintf("/proc/%d/ns/net", initPID))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	netnsID := C.netns_get_nsid(C.__s32(f.Fd()))
+	if netnsID < 0 {
+		return nil, fmt.Errorf("Failed to retrieve network namespace id")
+	}
+
+	ret := C.netns_getifaddrs(&ifaddrs, netnsID)
 	if ret < 0 {
 		return nil, fmt.Errorf("Failed to retrieve network interfaces and addresses")
 	}
