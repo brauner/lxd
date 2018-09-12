@@ -978,14 +978,17 @@ func NetnsGetifaddrs(initPID int32) (map[string]api.NetworkState, error) {
 			addNetwork.Type = netType
 			addNetwork.Mtu = int(addr.ifa_mtu)
 		} else if addr.ifa_addr.sa_family == C.AF_PACKET {
-			var buf [1024]C.char
 
-			hwaddr := C.get_packet_address(addr.ifa_addr, &buf[0], 1024)
-			if hwaddr == nil {
-				return nil, fmt.Errorf("Failed to retrieve hardware address")
+			if (addr.ifa_flags & C.IFF_LOOPBACK) == 0 {
+				var buf [1024]C.char
+
+				hwaddr := C.get_packet_address(addr.ifa_addr, &buf[0], 1024)
+				if hwaddr == nil {
+					return nil, fmt.Errorf("Failed to retrieve hardware address")
+				}
+
+				addNetwork.Hwaddr = C.GoString(hwaddr)
 			}
-
-			addNetwork.Hwaddr = C.GoString(hwaddr)
 
 			stats := (*C.struct_rtnl_link_stats)(addr.ifa_data)
 			if stats != nil {
