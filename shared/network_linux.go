@@ -981,12 +981,16 @@ func NetnsGetifaddrs(initPID int32) (map[string]api.NetworkState, error) {
 			}
 
 			addNetwork.Hwaddr = C.GoString(hwaddr)
-		}
 
-		ifName := C.GoString(addr.ifa_name)
-		if !networkExists {
-			addNetwork.Counters = NetworkGetCounters(ifName)
+			stats := (*C.struct_rtnl_link_stats)(addr.ifa_data)
+			if stats != nil {
+				addNetwork.Counters.BytesReceived = int64(stats.rx_bytes)
+				addNetwork.Counters.BytesSent = int64(stats.tx_bytes)
+				addNetwork.Counters.PacketsReceived = int64(stats.rx_packets)
+				addNetwork.Counters.PacketsSent = int64(stats.tx_packets)
+			}
 		}
+		ifName := C.GoString(addr.ifa_name)
 
 		networks[ifName] = addNetwork
 	}
