@@ -873,16 +873,21 @@ import "C"
 
 func NetnsGetifaddrs(initPID int32) (map[string]api.NetworkState, error) {
 	var ifaddrs *C.struct_netns_ifaddrs
+	var netnsID C.__s32
 
-	f, err := os.Open(fmt.Sprintf("/proc/%d/ns/net", initPID))
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
+	if initPID > 0 {
+		f, err := os.Open(fmt.Sprintf("/proc/%d/ns/net", initPID))
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
 
-	netnsID := C.netns_get_nsid(C.__s32(f.Fd()))
-	if netnsID < 0 {
-		return nil, fmt.Errorf("Failed to retrieve network namespace id")
+		netnsID = C.netns_get_nsid(C.__s32(f.Fd()))
+		if netnsID < 0 {
+			return nil, fmt.Errorf("Failed to retrieve network namespace id")
+		}
+	} else {
+		netnsID = -1
 	}
 
 	ret := C.netns_getifaddrs(&ifaddrs, netnsID)
