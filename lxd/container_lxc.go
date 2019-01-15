@@ -1149,6 +1149,12 @@ func (c *containerLXC) initLXC(config bool) error {
 	}
 
 	// Setup the hooks
+	shiftfs := filepath.Join(c.Path(), "rootfs.shiftfs")
+	err = lxcSetConfigItem(cc, "lxc.hook.pre-mount", fmt.Sprintf("/bin/mount -t shiftfs %s %s.real", shiftfs, c.RootfsPath()))
+	if err != nil {
+		return err
+	}
+
 	err = lxcSetConfigItem(cc, "lxc.hook.pre-start", fmt.Sprintf("%s callhook %s %d start", c.state.OS.ExecPath, shared.VarPath(""), c.id))
 	if err != nil {
 		return err
@@ -1709,7 +1715,7 @@ func (c *containerLXC) initLXC(config bool) error {
 				// Set the rootfs path
 				if util.RuntimeLiblxcVersionAtLeast(2, 1, 0) {
 					rootfsPath := fmt.Sprintf("dir:%s", c.RootfsPath())
-					err = lxcSetConfigItem(cc, "lxc.rootfs.path", rootfsPath)
+					err = lxcSetConfigItem(cc, "lxc.rootfs.path", fmt.Sprintf("%s.real", rootfsPath))
 				} else {
 					rootfsPath := c.RootfsPath()
 					err = lxcSetConfigItem(cc, "lxc.rootfs", rootfsPath)
@@ -1992,7 +1998,7 @@ func (c *containerLXC) startCommon() (string, error) {
 		jsonIdmap = "[]"
 	}
 
-	if !reflect.DeepEqual(idmap, lastIdmap) {
+	if !reflect.DeepEqual(idmap, lastIdmap) && !c.state.OS.Shiftfs {
 		if shared.IsTrue(c.expandedConfig["security.protection.shift"]) {
 			return "", fmt.Errorf("Container is protected against filesystem shifting")
 		}
@@ -2601,6 +2607,31 @@ func (c *containerLXC) OnStart() error {
 		return err
 	}
 
+	// Setup host side shiftfs
+	if c.state.OS.Shiftfs {
+		shiftfs := filepath.Join(c.Path(), "rootfs.shiftfs")
+		if !shared.IsMountPoint(shiftfs) {
+			if !shared.PathExists(shiftfs) {
+				err := os.MkdirAll(shiftfs, 0700)
+				if err != nil {
+					return err
+				}
+			}
+
+			err := syscall.Mount(c.RootfsPath(), shiftfs, "shiftfs", 0, "mark")
+			if err != nil {
+				return err
+			}
+		}
+
+		if !shared.PathExists(fmt.Sprintf("%s.real", c.RootfsPath())) {
+			err := os.MkdirAll(fmt.Sprintf("%s.real", c.RootfsPath()), 0700)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	// Load the container AppArmor profile
 	err = AALoadProfile(c)
 	if err != nil {
@@ -2880,8 +2911,15 @@ func (c *containerLXC) OnStop(target string) error {
 	// Make sure we can't call go-lxc functions by mistake
 	c.fromHook = true
 
+	// Unmount shiftfs
+	shiftfs := filepath.Join(c.Path(), "rootfs.shiftfs")
+	err := syscall.Unmount(shiftfs, syscall.MNT_DETACH)
+	if err != nil {
+		return err
+	}
+
 	// Stop the storage for this container
-	_, err := c.StorageStop()
+	_, err = c.StorageStop()
 	if err != nil {
 		if op != nil {
 			op.Done(err)
@@ -5071,7 +5109,7 @@ func (c *containerLXC) Export(w io.Writer, properties map[string]string) error {
 		return err
 	}
 
-	if idmap != nil {
+	if idmap != nil && !c.state.OS.Shiftfs {
 		if !c.IsSnapshot() && shared.IsTrue(c.expandedConfig["security.protection.shift"]) {
 			return fmt.Errorf("Container is protected against filesystem shifting")
 		}
@@ -5392,7 +5430,7 @@ func (c *containerLXC) Migrate(args *CriuMigrationArgs) error {
 		 * opened by the process after it is in its user
 		 * namespace.
 		 */
-		if !c.IsPrivileged() {
+		if !c.IsPrivileged() && !c.state.OS.Shiftfs {
 			idmapset, err := c.IdmapSet()
 			if err != nil {
 				return err
