@@ -1150,7 +1150,7 @@ func (c *containerLXC) initLXC(config bool) error {
 
 	// Setup the hooks
 	shiftfs := filepath.Join(c.Path(), "rootfs.shiftfs")
-	err = lxcSetConfigItem(cc, "lxc.hook.pre-mount", fmt.Sprintf("/bin/mount -t shiftfs %s %s.real", shiftfs, c.RootfsPath()))
+	err = lxcSetConfigItem(cc, "lxc.hook.pre-mount", fmt.Sprintf("/bin/mount --verbose -o passthrough -t shiftfs %s %s.real", shiftfs, c.RootfsPath()))
 	if err != nil {
 		return err
 	}
@@ -2618,7 +2618,7 @@ func (c *containerLXC) OnStart() error {
 				}
 			}
 
-			err := syscall.Mount(c.RootfsPath(), shiftfs, "shiftfs", 0, "mark")
+			err := syscall.Mount(c.RootfsPath(), shiftfs, "shiftfs", 0, "mark,passthrough")
 			if err != nil {
 				return err
 			}
