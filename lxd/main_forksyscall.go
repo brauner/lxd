@@ -95,7 +95,7 @@ static bool acquire_basic_creds(pid_t pid)
 
 // Expects command line to be in the form:
 // <PID> <root-uid> <root-gid> <path> <mode> <dev>
-static void forkmknod()
+static void mknod_emulate()
 {
 	__do_close_prot_errno int target_dir_fd = -EBADF;
 	char *cur = NULL, *target = NULL, *target_dir = NULL, *target_host = NULL;
@@ -235,7 +235,7 @@ static bool change_creds(int ns_fd, cap_t caps, uid_t nsuid, gid_t nsgid, uid_t 
 	return true;
 }
 
-static void forksetxattr()
+static void setxattr_emulate()
 {
 	__do_close_prot_errno int ns_fd = -EBADF, target_fd = -EBADF;
 	int flags = 0;
@@ -316,6 +316,27 @@ static void forksetxattr()
 	}
 }
 
+static void mount_emulate()
+{
+	pid_t pid = -1;
+	char *source = NULL, *target = NULL, *fstype = NULL;
+	unsigned long flags = 0;
+	const void *data;
+
+	pid = atoi(advance_arg(true));
+	source = advance_arg(true);
+	target = advance_arg(true);
+	fstype = advance_arg(true);
+	flags = atoi(advance_arg(true));
+	data = advance_arg(false);
+
+	if (!acquire_basic_creds(pid))
+		_exit(EXIT_FAILURE);
+
+	if (mount(source, target, fstype, flags, data) < 0)
+		_exit(EXIT_FAILURE);
+}
+
 void forksyscall()
 {
 	char *syscall = NULL;
@@ -332,9 +353,11 @@ void forksyscall()
 		_exit(EXIT_SUCCESS);
 
 	if (strcmp(syscall, "mknod") == 0)
-		forkmknod();
+		mknod_emulate();
 	else if (strcmp(syscall, "setxattr") == 0)
-		forksetxattr();
+		setxattr_emulate();
+	else if (strcmp(syscall, "mount") == 0)
+		mount_emulate();
 	else
 		_exit(EXIT_FAILURE);
 

@@ -124,68 +124,70 @@ struct lxd_seccomp_data_arch {
 	int nr_mknod;
 	int nr_mknodat;
 	int nr_setxattr;
+	int nr_mount;
 };
 
 #define LXD_SECCOMP_NOTIFY_MKNOD    0
 #define LXD_SECCOMP_NOTIFY_MKNODAT  1
 #define LXD_SECCOMP_NOTIFY_SETXATTR 2
+#define LXD_SECCOMP_NOTIFY_MOUNT 3
 
 // ordered by likelihood of usage...
 static const struct lxd_seccomp_data_arch seccomp_notify_syscall_table[] = {
-	{ -1, LXD_SECCOMP_NOTIFY_MKNOD, LXD_SECCOMP_NOTIFY_MKNODAT, LXD_SECCOMP_NOTIFY_SETXATTR },
+	{ -1, LXD_SECCOMP_NOTIFY_MKNOD, LXD_SECCOMP_NOTIFY_MKNODAT, LXD_SECCOMP_NOTIFY_SETXATTR, LXD_SECCOMP_NOTIFY_MOUNT },
 #ifdef AUDIT_ARCH_X86_64
-	{ AUDIT_ARCH_X86_64,      133, 259, 188 },
+	{ AUDIT_ARCH_X86_64,      133, 259, 188, 165 },
 #endif
 #ifdef AUDIT_ARCH_I386
-	{ AUDIT_ARCH_I386,         14, 297, 226 },
+	{ AUDIT_ARCH_I386,         14, 297, 226,  21 },
 #endif
 #ifdef AUDIT_ARCH_AARCH64
-	{ AUDIT_ARCH_AARCH64,      -1,  33,   5 },
+	{ AUDIT_ARCH_AARCH64,      -1,  33,   5,  21 },
 #endif
 #ifdef AUDIT_ARCH_ARM
-	{ AUDIT_ARCH_ARM,          14, 324, 226 },
+	{ AUDIT_ARCH_ARM,          14, 324, 226,  21 },
 #endif
 #ifdef AUDIT_ARCH_ARMEB
-	{ AUDIT_ARCH_ARMEB,        14, 324, 226 },
+	{ AUDIT_ARCH_ARMEB,        14, 324, 226,  21 },
 #endif
 #ifdef AUDIT_ARCH_S390
-	{ AUDIT_ARCH_S390,         14, 290, 224 },
+	{ AUDIT_ARCH_S390,         14, 290, 224,  21 },
 #endif
 #ifdef AUDIT_ARCH_S390X
-	{ AUDIT_ARCH_S390X,        14, 290, 224 },
+	{ AUDIT_ARCH_S390X,        14, 290, 224,  21 },
 #endif
 #ifdef AUDIT_ARCH_PPC
-	{ AUDIT_ARCH_PPC,          14, 288, 209 },
+	{ AUDIT_ARCH_PPC,          14, 288, 209,  21 },
 #endif
 #ifdef AUDIT_ARCH_PPC64
-	{ AUDIT_ARCH_PPC64,        14, 288, 209 },
+	{ AUDIT_ARCH_PPC64,        14, 288, 209,  21 },
 #endif
 #ifdef AUDIT_ARCH_PPC64LE
-	{ AUDIT_ARCH_PPC64LE,      14, 288, 209 },
+	{ AUDIT_ARCH_PPC64LE,      14, 288, 209,  21 },
 #endif
 #ifdef AUDIT_ARCH_SPARC
-	{ AUDIT_ARCH_SPARC,        14, 286, 169 },
+	{ AUDIT_ARCH_SPARC,        14, 286, 169, 167 },
 #endif
 #ifdef AUDIT_ARCH_SPARC64
-	{ AUDIT_ARCH_SPARC64,      14, 286, 169 },
+	{ AUDIT_ARCH_SPARC64,      14, 286, 169, 167 },
 #endif
 #ifdef AUDIT_ARCH_MIPS
-	{ AUDIT_ARCH_MIPS,         14, 290, 224 },
+	{ AUDIT_ARCH_MIPS,         14, 290, 224,  21 },
 #endif
 #ifdef AUDIT_ARCH_MIPSEL
-	{ AUDIT_ARCH_MIPSEL,       14, 290, 224 },
+	{ AUDIT_ARCH_MIPSEL,       14, 290, 224,  21 },
 #endif
 #ifdef AUDIT_ARCH_MIPS64
-	{ AUDIT_ARCH_MIPS64,      131, 249, 180 },
+	{ AUDIT_ARCH_MIPS64,      131, 249, 180, 160 },
 #endif
 #ifdef AUDIT_ARCH_MIPS64N32
-	{ AUDIT_ARCH_MIPS64N32,   131, 253, 180 },
+	{ AUDIT_ARCH_MIPS64N32,   131, 253, 180, 160 },
 #endif
 #ifdef AUDIT_ARCH_MIPSEL64
-	{ AUDIT_ARCH_MIPSEL64,    131, 249, 180 },
+	{ AUDIT_ARCH_MIPSEL64,    131, 249, 180, 160 },
 #endif
 #ifdef AUDIT_ARCH_MIPSEL64N32
-	{ AUDIT_ARCH_MIPSEL64N32, 131, 253, 180 },
+	{ AUDIT_ARCH_MIPSEL64N32, 131, 253, 180, 160 },
 #endif
 };
 
@@ -213,6 +215,9 @@ static int seccomp_notify_get_syscall(struct seccomp_notif *req,
 
 		if (entry->nr_setxattr == req->data.nr)
 			return LXD_SECCOMP_NOTIFY_SETXATTR;
+
+		if (entry->nr_mount == req->data.nr)
+			return LXD_SECCOMP_NOTIFY_MOUNT;
 
 		break;
 	}
@@ -251,6 +256,7 @@ import "C"
 const lxdSeccompNotifyMknod = C.LXD_SECCOMP_NOTIFY_MKNOD
 const lxdSeccompNotifyMknodat = C.LXD_SECCOMP_NOTIFY_MKNODAT
 const lxdSeccompNotifySetxattr = C.LXD_SECCOMP_NOTIFY_SETXATTR
+const lxdSeccompNotifyMount = C.LXD_SECCOMP_NOTIFY_MOUNT
 
 const seccompHeader = `2
 `
@@ -270,6 +276,46 @@ mknodat notify [2,8192,SCMP_CMP_MASKED_EQ,61440]
 mknodat notify [2,24576,SCMP_CMP_MASKED_EQ,61440]
 `
 const seccompNotifySetxattr = `setxattr notify [3,1,SCMP_CMP_EQ]
+`
+
+// Define the following mask:
+//
+// long unsigned int mask = MS_MGC_VAL | MS_RDONLY | MS_NOSUID | MS_NODEV |
+//                          MS_NOEXEC | MS_SYNCHRONOUS | MS_MANDLOCK |
+//                          MS_DIRSYNC | MS_NOATIME | MS_NODIRATIME | MS_REC |
+//                          MS_VERBOSE | MS_SILENT | MS_POSIXACL | MS_RELATIME |
+//                          MS_STRICTATIME | MS_LAZYTIME;
+
+// We don't want to filter any of the following flag combinations since they do
+// not cause the creation of a new superblock:
+//
+// MS_REMOUNT
+// MS_BIND
+// MS_MOVE
+// MS_UNBINDABLE
+// MS_PRIVATE
+// MS_SLAVE
+// MS_SHARED
+// MS_KERNMOUNT
+// MS_I_VERSION
+//
+// So define the following mask of allowed flags:
+//
+// long unsigned int mask = MS_MGC_VAL | MS_RDONLY | MS_NOSUID | MS_NODEV |
+//                          MS_NOEXEC | MS_SYNCHRONOUS | MS_MANDLOCK |
+//                          MS_DIRSYNC | MS_NOATIME | MS_NODIRATIME | MS_REC |
+//                          MS_VERBOSE | MS_SILENT | MS_POSIXACL | MS_RELATIME |
+//                          MS_STRICTATIME | MS_LAZYTIME;
+//
+// Now we inverse the flag:
+//
+// inverse_mask ~= mask;
+//
+// Seccomp will now only intercept these flags if they do not contain any of
+// the allowed flags, i.e. we only intercept combinations were a new superblock
+// is created.
+
+const seccompNotifyMount = `mount notify [3,0,SCMP_CMP_MASKED_EQ,18446744070422410016]
 `
 
 const compatBlockingPolicy = `[%s]
@@ -320,6 +366,7 @@ type Instance interface {
 	RootfsPath() string
 	CurrentIdmap() (*idmap.IdmapSet, error)
 	InsertSeccompUnixDevice(prefix string, m deviceConfig.Device, pid int) error
+	InsertMountLXD(source, target, fstype string, flags int, mntnsPID int, shiftfs bool) error
 }
 
 var seccompPath = shared.VarPath("security", "seccomp")
@@ -352,6 +399,7 @@ func InstanceNeedsPolicy(c Instance) bool {
 		"security.syscalls.blacklist_compat",
 		"security.syscalls.intercept.mknod",
 		"security.syscalls.intercept.setxattr",
+		"security.syscalls.intercept.mount",
 	}
 
 	for _, k := range keys {
@@ -392,6 +440,7 @@ func InstanceNeedsIntercept(c Instance) (bool, error) {
 	keys := []string{
 		"security.syscalls.intercept.mknod",
 		"security.syscalls.intercept.setxattr",
+		"security.syscalls.intercept.mount",
 	}
 
 	needed := false
@@ -448,6 +497,10 @@ func seccompGetPolicyContent(c Instance) (string, error) {
 
 		if shared.IsTrue(config["security.syscalls.intercept.setxattr"]) {
 			policy += seccompNotifySetxattr
+		}
+
+		if shared.IsTrue(config["security.syscalls.intercept.mount"]) {
+			policy += seccompNotifyMount
 		}
 	}
 
@@ -1132,6 +1185,140 @@ func (s *Server) HandleSetxattrSyscall(c Instance, siov *Iovec) int {
 	return 0
 }
 
+// MountArgs arguments for mount.
+type MountArgs struct {
+	source string
+	target string
+	fstype string
+	flags  int
+	data   string
+	pid    int
+}
+
+// HandleMountSyscall handles mount syscalls.
+func (s *Server) HandleMountSyscall(c Instance, siov *Iovec) int {
+	ctx := log.Ctx{"container": c.Name(),
+		"project":              c.Project(),
+		"syscall_number":       siov.req.data.nr,
+		"audit_architecture":   siov.req.data.arch,
+		"seccomp_notify_id":    siov.req.id,
+		"seccomp_notify_flags": siov.req.flags,
+	}
+
+	defer logger.Debug("Handling mount syscall", ctx)
+
+	args := MountArgs{
+		pid: int(siov.req.pid),
+	}
+
+	// const char *source
+	args.source = ""
+	if siov.req.data.args[0] != 0 {
+		cBuf := [unix.PathMax]C.char{}
+		_, err := C.pread(C.int(siov.memFd), unsafe.Pointer(&cBuf[0]), C.size_t(unix.PathMax), C.off_t(siov.req.data.args[0]))
+		if err != nil {
+			ctx["err"] = fmt.Sprintf("Failed to read memory for first argument of mount syscall: %s", err)
+			if s.s.OS.SeccompListenerContinue {
+				ctx["syscall_continue"] = "true"
+				C.seccomp_notify_update_response(siov.resp, 0, C.uint32_t(seccompUserNotifFlagContinue))
+				return 0
+			}
+
+			return int(-C.EPERM)
+		}
+		args.source = C.GoString(&cBuf[0])
+	}
+
+	// const char *target
+	args.target = ""
+	if siov.req.data.args[1] != 0 {
+		cBuf := [unix.PathMax]C.char{}
+		_, err := C.pread(C.int(siov.memFd), unsafe.Pointer(&cBuf[0]), C.size_t(unix.PathMax), C.off_t(siov.req.data.args[1]))
+		if err != nil {
+			ctx["err"] = fmt.Sprintf("Failed to read memory for second argument of mount syscall: %s", err)
+			if s.s.OS.SeccompListenerContinue {
+				ctx["syscall_continue"] = "true"
+				C.seccomp_notify_update_response(siov.resp, 0, C.uint32_t(seccompUserNotifFlagContinue))
+				return 0
+			}
+
+			return int(-C.EPERM)
+		}
+		args.target = C.GoString(&cBuf[0])
+	}
+
+	// const char *filesystemtype
+	args.fstype = ""
+	if siov.req.data.args[2] != 0 {
+		cBuf := [unix.PathMax]C.char{}
+		_, err := C.pread(C.int(siov.memFd), unsafe.Pointer(&cBuf[0]), C.size_t(unix.PathMax), C.off_t(siov.req.data.args[2]))
+		if err != nil {
+			ctx["err"] = fmt.Sprintf("Failed to read memory for third argument of mount syscall: %s", err)
+			if s.s.OS.SeccompListenerContinue {
+				ctx["syscall_continue"] = "true"
+				C.seccomp_notify_update_response(siov.resp, 0, C.uint32_t(seccompUserNotifFlagContinue))
+				return 0
+			}
+
+			return int(-C.EPERM)
+		}
+		args.fstype = C.GoString(&cBuf[0])
+	}
+
+	if args.fstype != "debugfs" {
+		ctx["err"] = fmt.Sprintf("Invalid filesystem type '%s'", args.fstype)
+		if s.s.OS.SeccompListenerContinue {
+			ctx["syscall_continue"] = "true"
+			C.seccomp_notify_update_response(siov.resp, 0, C.uint32_t(seccompUserNotifFlagContinue))
+			return 0
+		}
+
+		return int(-C.EPERM)
+	}
+
+	// unsigned long mountflags
+	args.flags = int(siov.req.data.args[3])
+
+	// const void *data
+	args.data = ""
+	if siov.req.data.args[4] != 0 {
+		cBuf := [unix.PathMax]C.char{}
+		_, err := C.pread(C.int(siov.memFd), unsafe.Pointer(&cBuf[0]), C.size_t(unix.PathMax), C.off_t(siov.req.data.args[4]))
+		if err != nil {
+			ctx["err"] = fmt.Sprintf("Failed to read memory for fifth argument of mount syscall: %s", err)
+			if s.s.OS.SeccompListenerContinue {
+				ctx["syscall_continue"] = "true"
+				C.seccomp_notify_update_response(siov.resp, 0, C.uint32_t(seccompUserNotifFlagContinue))
+				return 0
+			}
+
+			return int(-C.EPERM)
+		}
+		args.data = C.GoString(&cBuf[0])
+	}
+
+	_, _, err := shared.RunCommandSplit(nil, util.GetExecPath(),
+		"forksyscall",
+		"mount",
+		fmt.Sprintf("%d", args.pid),
+		fmt.Sprintf("%s", args.source),
+		fmt.Sprintf("%s", args.target),
+		fmt.Sprintf("%s", args.fstype),
+		fmt.Sprintf("%d", args.flags),
+		fmt.Sprintf("%s", args.data))
+	if err != nil {
+		if s.s.OS.SeccompListenerContinue {
+			ctx["syscall_continue"] = "true"
+			C.seccomp_notify_update_response(siov.resp, 0, C.uint32_t(seccompUserNotifFlagContinue))
+			return 0
+		}
+
+		return int(-C.EPERM)
+	}
+
+	return 0
+}
+
 func (s *Server) handleSyscall(c Instance, siov *Iovec) int {
 	switch int(C.seccomp_notify_get_syscall(siov.req, siov.resp)) {
 	case lxdSeccompNotifyMknod:
@@ -1140,6 +1327,8 @@ func (s *Server) handleSyscall(c Instance, siov *Iovec) int {
 		return s.HandleMknodatSyscall(c, siov)
 	case lxdSeccompNotifySetxattr:
 		return s.HandleSetxattrSyscall(c, siov)
+	case lxdSeccompNotifyMount:
+		return s.HandleMountSyscall(c, siov)
 	}
 
 	return int(-C.EINVAL)

@@ -245,6 +245,7 @@ type container interface {
 	OnStop(target string) error
 
 	InsertSeccompUnixDevice(prefix string, m deviceConfig.Device, pid int) error
+	InsertMountLXD(source, target, fstype string, flags int, mntnsPID int, shiftfs bool) error
 
 	CurrentIdmap() (*idmap.IdmapSet, error)
 	DiskIdmap() (*idmap.IdmapSet, error)

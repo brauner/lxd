@@ -6122,7 +6122,7 @@ func (c *containerLXC) StorageStop() (bool, error) {
 }
 
 // Mount handling
-func (c *containerLXC) insertMountLXD(source, target, fstype string, flags int, mntnsPID int, shiftfs bool) error {
+func (c *containerLXC) InsertMountLXD(source, target, fstype string, flags int, mntnsPID int, shiftfs bool) error {
 	pid := mntnsPID
 	if pid <= 0 {
 		// Get the init PID
@@ -6204,7 +6204,7 @@ func (c *containerLXC) insertMount(source, target, fstype string, flags int, shi
 		return c.insertMountLXC(source, target, fstype, flags)
 	}
 
-	return c.insertMountLXD(source, target, fstype, flags, -1, shiftfs)
+	return c.InsertMountLXD(source, target, fstype, flags, -1, shiftfs)
 }
 
 func (c *containerLXC) removeMount(mount string) error {
@@ -6291,7 +6291,7 @@ func (c *containerLXC) InsertSeccompUnixDevice(prefix string, m deviceConfig.Dev
 
 	// Bind-mount it into the container
 	defer os.Remove(devPath)
-	return c.insertMountLXD(devPath, tgtPath, "none", unix.MS_BIND, pid, false)
+	return c.InsertMountLXD(devPath, tgtPath, "none", unix.MS_BIND, pid, false)
 }
 
 func (c *containerLXC) removeUnixDevices() error {
