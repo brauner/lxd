@@ -147,7 +147,7 @@ static const struct lxd_seccomp_data_arch seccomp_notify_syscall_table[] = {
 	{ AUDIT_ARCH_I386,         14, 297, 226,  21, 357 },
 #endif
 #ifdef AUDIT_ARCH_AARCH64
-	{ AUDIT_ARCH_AARCH64,      -1,  33,   5,  21, 386 },
+	{ AUDIT_ARCH_AARCH64,      14, 324, 226,  21, 386 },
 #endif
 #ifdef AUDIT_ARCH_ARM
 	{ AUDIT_ARCH_ARM,          14, 324, 226,  21, 386 },
