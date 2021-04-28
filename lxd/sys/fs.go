@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
+	// Used by cgo
+	_ "github.com/lxc/lxd/lxd/include"
 	"github.com/pkg/errors"
 )
 

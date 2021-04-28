@@ -4,6 +4,7 @@ import (
 	"golang.org/x/sys/unix"
 	"os"
 	"runtime"
+
 	// Used by cgo
 	_ "github.com/lxc/lxd/lxd/include"
 
@@ -32,6 +33,7 @@ import (
 #include <linux/seccomp.h>
 #include <linux/filter.h>
 #include <linux/audit.h>
+#include <sys/mount.h>
 #include <sys/ptrace.h>
 #include <sys/wait.h>
 
@@ -53,7 +55,6 @@ __ro_after_init int seccomp_notify_aware = 0;
 __ro_after_init char errbuf[4096];
 
 extern int can_inject_uevent(const char *uevent, size_t len);
-extern int wait_for_pid(pid_t pid);
 extern int preserve_ns(pid_t pid, int ns_fd, const char *ns);
 
 static int netns_set_nsid(int fd)

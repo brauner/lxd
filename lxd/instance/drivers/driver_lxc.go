@@ -162,6 +162,7 @@ func lxcCreate(s *state.State, args db.InstanceArgs) (instance.Instance, error) 
 			snapshot:     args.Snapshot,
 			stateful:     args.Stateful,
 		},
+		idmappedStorage: idmap.IdmapStorageUnknown,
 	}
 
 	revert := revert.New()
@@ -410,6 +411,7 @@ func lxcInstantiate(s *state.State, args db.InstanceArgs, expandedDevices device
 			snapshot:     args.Snapshot,
 			stateful:     args.Stateful,
 		},
+		idmappedStorage: idmap.IdmapStorageUnknown,
 	}
 
 	// Cleanup the zero values
@@ -443,10 +445,11 @@ type lxc struct {
 	// Cached handles.
 	// Do not use these variables directly, instead use their associated get functions so they
 	// will be initialised on demand.
-	c           *liblxc.Container
-	cConfig     bool
-	idmapset    *idmap.IdmapSet
-	storagePool storagePools.Pool
+	c               *liblxc.Container
+	cConfig         bool
+	idmapset        *idmap.IdmapSet
+	storagePool     storagePools.Pool
+	idmappedStorage idmap.IdmapStorageType
 }
 
 func idmapSize(state *state.State, isolatedStr string, size string) (int64, error) {
@@ -1301,6 +1304,23 @@ func (d *lxc) initLXC(config bool) error {
 	return nil
 }
 
+// IdmappedStorage determines if the container can use idmapped mounts or shiftfs
+func (d *lxc) IdmappedStorage() idmap.IdmapStorageType {
+	if d.idmappedStorage != idmap.IdmapStorageUnknown {
+		return d.idmappedStorage
+	}
+
+	if idmap.CanIdmapMount(d.RootfsPath()) {
+		d.idmappedStorage = idmap.IdmapStorageIdmapped
+	} else if d.state.OS.Shiftfs {
+		d.idmappedStorage = idmap.IdmapStorageShiftfs
+	} else {
+		d.idmappedStorage = idmap.IdmapStorageNone
+	}
+
+	return d.idmappedStorage
+}
+
 func (d *lxc) devlxdEventSend(eventType string, eventMessage interface{}) error {
 	event := shared.Jmap{}
 	event["type"] = eventType
@@ -1885,19 +1905,21 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 		return "", nil, errors.Wrap(err, "Set last ID map")
 	}
 
+	idmapType := d.IdmappedStorage()
+
 	// Once mounted, check if filesystem needs shifting.
-	if !nextIdmap.Equals(diskIdmap) && !(diskIdmap == nil && d.state.OS.Shiftfs) {
+	if !nextIdmap.Equals(diskIdmap) && !(diskIdmap == nil && idmapType != idmap.IdmapStorageNone) {
+		storageType, err := d.getStorageType()
+		if err != nil {
+			return "", nil, errors.Wrap(err, "Storage type")
+		}
+
 		if shared.IsTrue(d.expandedConfig["security.protection.shift"]) {
 			return "", nil, fmt.Errorf("Container is protected against filesystem shifting")
 		}
 
 		d.logger.Debug("Container idmap changed, remapping")
 		d.updateProgress("Remapping container filesystem")
-
-		storageType, err := d.getStorageType()
-		if err != nil {
-			return "", nil, errors.Wrap(err, "Storage type")
-		}
 
 		if diskIdmap != nil {
 			if storageType == "zfs" {
@@ -1912,7 +1934,7 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 			}
 		}
 
-		if nextIdmap != nil && !d.state.OS.Shiftfs {
+		if nextIdmap != nil && idmapType == idmap.IdmapStorageNone {
 			if storageType == "zfs" {
 				err = nextIdmap.ShiftRootfs(d.RootfsPath(), storageDrivers.ShiftZFSSkipper)
 			} else if storageType == "btrfs" {
@@ -1926,7 +1948,7 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 		}
 
 		jsonDiskIdmap := "[]"
-		if nextIdmap != nil && !d.state.OS.Shiftfs {
+		if nextIdmap != nil && idmapType == idmap.IdmapStorageNone {
 			idmapBytes, err := json.Marshal(nextIdmap.Idmap)
 			if err != nil {
 				return "", nil, err
@@ -2048,23 +2070,30 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 				}
 			}
 
-			if d.state.OS.Shiftfs && !d.IsPrivileged() && diskIdmap == nil {
-				// Host side mark mount.
-				err = lxcSetConfigItem(d.c, "lxc.hook.pre-start", fmt.Sprintf("/bin/mount -t shiftfs -o mark,passthrough=3 %s %s", strconv.Quote(d.RootfsPath()), strconv.Quote(d.RootfsPath())))
-				if err != nil {
-					return "", nil, errors.Wrapf(err, "Failed to setup device mount shiftfs '%s'", dev.Name)
-				}
+			if !d.IsPrivileged() && diskIdmap == nil {
+				if idmapType == idmap.IdmapStorageIdmapped {
+					err = lxcSetConfigItem(d.c, "lxc.rootfs.options", "idmap=container")
+					if err != nil {
+						return "", nil, errors.Wrapf(err, "Failed to set \"idmap=container\" rootfs option")
+					}
+				} else if idmapType == idmap.IdmapStorageShiftfs {
+					// Host side mark mount.
+					err = lxcSetConfigItem(d.c, "lxc.hook.pre-start", fmt.Sprintf("/bin/mount -t shiftfs -o mark,passthrough=3 %s %s", strconv.Quote(d.RootfsPath()), strconv.Quote(d.RootfsPath())))
+					if err != nil {
+						return "", nil, errors.Wrapf(err, "Failed to setup device mount shiftfs '%s'", dev.Name)
+					}
 
-				// Container side shift mount.
-				err = lxcSetConfigItem(d.c, "lxc.hook.pre-mount", fmt.Sprintf("/bin/mount -t shiftfs -o passthrough=3 %s %s", strconv.Quote(d.RootfsPath()), strconv.Quote(d.RootfsPath())))
-				if err != nil {
-					return "", nil, errors.Wrapf(err, "Failed to setup device mount shiftfs '%s'", dev.Name)
-				}
+					// Container side shift mount.
+					err = lxcSetConfigItem(d.c, "lxc.hook.pre-mount", fmt.Sprintf("/bin/mount -t shiftfs -o passthrough=3 %s %s", strconv.Quote(d.RootfsPath()), strconv.Quote(d.RootfsPath())))
+					if err != nil {
+						return "", nil, errors.Wrapf(err, "Failed to setup device mount shiftfs '%s'", dev.Name)
+					}
 
-				// Host side umount of mark mount.
-				err = lxcSetConfigItem(d.c, "lxc.hook.start-host", fmt.Sprintf("/bin/umount -l %s", strconv.Quote(d.RootfsPath())))
-				if err != nil {
-					return "", nil, errors.Wrapf(err, "Failed to setup device mount shiftfs '%s'", dev.Name)
+					// Host side umount of mark mount.
+					err = lxcSetConfigItem(d.c, "lxc.hook.start-host", fmt.Sprintf("/bin/umount -l %s", strconv.Quote(d.RootfsPath())))
+					if err != nil {
+						return "", nil, errors.Wrapf(err, "Failed to setup device mount shiftfs '%s'", dev.Name)
+					}
 				}
 			}
 		}
@@ -5894,7 +5923,7 @@ func (d *lxc) unmount() (bool, error) {
 		return false, err
 	}
 
-	if d.state.OS.Shiftfs && !d.IsPrivileged() && diskIdmap == nil {
+	if d.IdmappedStorage() == idmap.IdmapStorageShiftfs && !d.IsPrivileged() && diskIdmap == nil {
 		unix.Unmount(d.RootfsPath(), unix.MNT_DETACH)
 	}
 
