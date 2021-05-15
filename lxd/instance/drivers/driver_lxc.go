@@ -6012,6 +6012,10 @@ func (d *lxc) insertMountLXD(source, target, fstype string, flags int, mntnsPID 
 		defer pidFd.Close()
 	}
 
+	if !strings.HasPrefix(target, "/") {
+		target = "/" + target
+	}
+
 	_, err = shared.RunCommandInheritFds(
 		[]*os.File{pidFd},
 		d.state.OS.ExecPath,
