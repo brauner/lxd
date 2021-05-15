@@ -1718,13 +1718,16 @@ func (d *lxc) deviceHandleMounts(mounts []deviceConfig.MountEntryItem) error {
 				}
 			}
 
-			shiftfs := false
+			var idmapType idmap.IdmapStorageType = idmap.IdmapStorageNone
 			if mount.OwnerShift == deviceConfig.MountOwnerShiftDynamic {
-				shiftfs = true
+				idmapType = d.IdmappedStorage()
+				if idmapType == idmap.IdmapStorageNone {
+					return fmt.Errorf("Required idmapping abilities not available")
+				}
 			}
 
 			// Mount it into the container.
-			err := d.insertMount(mount.DevPath, mount.TargetPath, mount.FSType, flags, shiftfs)
+			err := d.insertMount(mount.DevPath, mount.TargetPath, mount.FSType, flags, idmapType)
 			if err != nil {
 				return fmt.Errorf("Failed to add mount for device inside container: %s", err)
 			}
@@ -4084,7 +4087,7 @@ func (d *lxc) Update(args db.InstanceArgs, userRequested bool) error {
 				}
 			} else if key == "security.devlxd" {
 				if value == "" || shared.IsTrue(value) {
-					err = d.insertMount(shared.VarPath("devlxd"), "/dev/lxd", "none", unix.MS_BIND, false)
+					err = d.insertMount(shared.VarPath("devlxd"), "/dev/lxd", "none", unix.MS_BIND, idmap.IdmapStorageNone)
 					if err != nil {
 						return err
 					}
@@ -5941,7 +5944,7 @@ func (d *lxc) unmount() (bool, error) {
 // we'll have a deadlock (with a timeout but still). The InitPID() call here is
 // the exception since the seccomp notifier will make sure to always pass a
 // valid PID.
-func (d *lxc) insertMountLXD(source, target, fstype string, flags int, mntnsPID int, shiftfs bool) error {
+func (d *lxc) insertMountLXD(source, target, fstype string, flags int, mntnsPID int, idmapType idmap.IdmapStorageType) error {
 	pid := mntnsPID
 	if pid <= 0 {
 		// Get the init PID
@@ -5995,7 +5998,7 @@ func (d *lxc) insertMountLXD(source, target, fstype string, flags int, mntnsPID 
 		unix.MS_NODIRATIME))
 
 	// Setup host side shiftfs as needed
-	if shiftfs {
+	if idmapType == idmap.IdmapStorageShiftfs {
 		err = unix.Mount(tmpMount, tmpMount, "shiftfs", uintptr(shiftfsFlags), "mark,passthrough=3")
 		if err != nil {
 			return fmt.Errorf("Failed to setup host side shiftfs mount: %s", err)
@@ -6026,7 +6029,7 @@ func (d *lxc) insertMountLXD(source, target, fstype string, flags int, mntnsPID 
 		fmt.Sprintf("%d", pidFdNr),
 		mntsrc,
 		target,
-		fmt.Sprintf("%v", shiftfs),
+		string(idmapType),
 		fmt.Sprintf("%d", shiftfsFlags))
 	if err != nil {
 		return err
@@ -6065,12 +6068,12 @@ func (d *lxc) insertMountLXC(source, target, fstype string, flags int) error {
 	return nil
 }
 
-func (d *lxc) insertMount(source, target, fstype string, flags int, shiftfs bool) error {
-	if d.state.OS.LXCFeatures["mount_injection_file"] && !shiftfs {
+func (d *lxc) insertMount(source, target, fstype string, flags int, idmapType idmap.IdmapStorageType) error {
+	if d.state.OS.LXCFeatures["mount_injection_file"] && idmapType == idmap.IdmapStorageNone {
 		return d.insertMountLXC(source, target, fstype, flags)
 	}
 
-	return d.insertMountLXD(source, target, fstype, flags, -1, shiftfs)
+	return d.insertMountLXD(source, target, fstype, flags, -1, idmapType)
 }
 
 func (d *lxc) removeMount(mount string) error {
@@ -6179,7 +6182,7 @@ func (d *lxc) InsertSeccompUnixDevice(prefix string, m deviceConfig.Device, pid 
 
 	// Bind-mount it into the container
 	defer os.Remove(devPath)
-	return d.insertMountLXD(devPath, tgtPath, "none", unix.MS_BIND, pid, false)
+	return d.insertMountLXD(devPath, tgtPath, "none", unix.MS_BIND, pid, idmap.IdmapStorageNone)
 }
 
 func (d *lxc) removeUnixDevices() error {
