@@ -2008,11 +2008,6 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 	}
 	revert.Add(func() { d.unmount() })
 
-	diskIdmap, err := d.DiskIdmap()
-	if err != nil {
-		return "", nil, errors.Wrap(err, "Set last ID map")
-	}
-
 	idmapType, nextIdmap, err := d.handleIdmappedStorage()
 	if err != nil {
 		return "", nil, errors.Wrap(err, "Failed to handle idmappe storage")
@@ -2124,7 +2119,7 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 				}
 			}
 
-			if !d.IsPrivileged() && diskIdmap == nil {
+			if !d.IsPrivileged() {
 				if idmapType == idmap.IdmapStorageIdmapped {
 					err = lxcSetConfigItem(d.c, "lxc.rootfs.options", "idmap=container")
 					if err != nil {
